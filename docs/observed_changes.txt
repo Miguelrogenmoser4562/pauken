@@ -1,0 +1,17 @@
+
+
+1. Remove nameable units. Keep the as unit 1, 2, 3, etc.
+1b. Remove the ability to add stuff outside of a unit.
+1c. When inside a unit, change the "Add Unit" button to "Add Knowledge"
+2. Verify what happens when a user is taken out of the generatoin screen. Make it look nicer by redirecting, and just show some sort of pending animation when ready.
+3. Admin panel should an admin to make another user an admin. Admin panel should allow one to create and delete users.
+4. profile picture feature is broken. Will not allow one to change image. 
+5. When disconnecting form server, keep the default server so that the user doens't have to type it again.
+6. When you have multiple units "Unit 1, Unit 2", in this case, unit two is presented above one. Go form 1 to latest.
+7. Implement cache to make the dashboard not flash with nothing when connected to the server.
+8. Make the "Quick Review" generation be only 3 bullet points.
+
+
+
+IDEAS FOR OTHER FEATURES (NOT TO IMPLEMENT):
+- create a scraper that can look for pdfs to download. hella useful for math and physics problems online from other universities.

@@ -1,0 +1,24 @@
+{
+  "users": [
+    {
+      "id": "user-001",
+      "name": "Alice",
+      "key": "pauken_key_alice_change_this"
+    },
+    {
+      "id": "user-002",
+      "name": "Bob",
+      "key": "pauken_key_bob_change_this"
+    },
+    {
+      "id": "user-003",
+      "name": "Charlie",
+      "key": "pauken_key_charlie_change_this"
+    },
+    {
+      "id": "user-004",
+      "name": "Diana",
+      "key": "pauken_key_diana_change_this"
+    }
+  ]
+}

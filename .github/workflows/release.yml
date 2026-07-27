@@ -1,0 +1,116 @@
+name: Build desktop installers
+
+# Produces the downloadable Mac (.dmg) and Windows (.exe) installers.
+# Trigger by pushing a version tag (e.g. `git tag v0.1.0 && git push --tags`),
+# or run manually from the Actions tab. Artifacts are attached to a GitHub
+# Release so the README's download links resolve to real files.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            script: dist:mac
+          - os: windows-latest
+            script: dist:win
+          - os: ubuntu-latest
+            script: dist
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Build a dedicated signing keychain containing the Developer ID cert AND
+      # Apple's Developer ID intermediate — a .p12 alone has only the leaf, so
+      # without the intermediate the chain is "not trusted" and electron-builder
+      # silently skips signing. Runs only when the cert secret is present; a
+      # fork without it falls through to the ad-hoc build. Only this step sees
+      # CSC_LINK/CSC_KEY_PASSWORD, so the build step won't spin up its own
+      # (untrusted) temp keychain.
+      - name: Set up macOS code signing
+        if: runner.os == 'macOS'
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CSC_LINK:-}" ]; then
+            echo "No signing certificate configured — building ad-hoc."
+            exit 0
+          fi
+          KEYCHAIN="$RUNNER_TEMP/pauken-signing.keychain-db"
+          KPW="$(openssl rand -base64 24)"
+          security create-keychain -p "$KPW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KPW" "$KEYCHAIN"
+          echo "$CSC_LINK" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$CSC_KEY_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          # Apple Developer ID intermediates (checked into the repo) complete the
+          # trust chain — a .p12 has only the leaf. Both G1 and G2 are imported;
+          # the leaf is issued by whichever one, so this resolves it either way.
+          security import build-resources/apple-developer-id-intermediates.pem -k "$KEYCHAIN" || true
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KPW" "$KEYCHAIN" >/dev/null
+          # Put our keychain first in the search list so signing finds the identity.
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed 's/"//g')
+          rm -f "$RUNNER_TEMP/cert.p12"
+          echo "Signing identities available:"
+          security find-identity -v -p codesigning "$KEYCHAIN"
+          echo "CSC_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          echo "MAC_SIGN=1" >> "$GITHUB_ENV"
+
+      - name: Build installer
+        run: npm run ${{ matrix.script }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS signing uses the keychain set up above (CSC_KEYCHAIN/MAC_SIGN);
+          # CSC_LINK is deliberately NOT passed here. Notarization reads the
+          # Apple credentials. Windows Authenticode signing activates if the
+          # WIN_* secrets are set. All optional — absent = ad-hoc/unsigned.
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+
+      - name: Upload installers as workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pauken-${{ matrix.os }}
+          path: |
+            release/*.dmg
+            release/*.exe
+            release/*.AppImage
+          if-no-files-found: warn
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true

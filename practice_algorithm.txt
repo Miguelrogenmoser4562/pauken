@@ -1,0 +1,185 @@
+# Practice Algorithm — System Design
+
+**Scope:** covers the two "Largescale" items — flashcards-as-learning-system and the smart practice algorithm — now integrated with your actual content pipeline: **Class → Unit → Lecture → (notes generated) → (questions generated)**.
+
+**Revision note:** this version adds §3 (Question Generation Pipeline) and reworks session composition (§5) to handle batch-generated content instead of assuming steady, one-at-a-time content arrival. Everything else from the last version is unchanged in substance.
+
+Load-bearing requirements, still tracked throughout:
+
+- **[R1]** Practice volume scales with total content covered — no flat quota, no overload when little content exists yet.
+- **[R2]** Grading input is optional without breaking the system; user can manually pick what to practice; weak-point detection emerges from data over time.
+
+---
+
+## 1. Content Hierarchy
+
+```
+Class → Unit → Lecture → Cards (concepts / questions)
+```
+
+Every card carries `lecture_id`; `lecture_id → unit_id → class_id` is resolved via the parent chain, not duplicated onto the card. This gives you selection and diagnostics at any granularity (whole class, a unit, or a single lecture) for free — no schema changes needed later to support that.
+
+---
+
+## 2. Core Model: Two Phases, One Engine
+
+```
+NEW → LEARNING → REVIEW ⇄ RELEARNING (loops back into REVIEW)
+```
+
+- **NEW** — generated, but never shown to the user yet. This is the backlog state that batch generation actually needs (see §5).
+- **LEARNING** — first exposure(s). Pedagogical: shows context/explanation, not a blind test. "Flashcards as part of a learning system" lives here.
+- **REVIEW** — spaced retrieval, FSRS-driven, exam-date-aware.
+- **RELEARNING** — temporary state after a failed review; graduates back to REVIEW once re-stabilized.
+
+---
+
+## 3. Question Generation Pipeline
+
+This is the piece that didn't exist yet and is what "flowing better with this" actually depends on.
+
+**Trigger:** runs once notes exist for a lecture (after transcription + note generation completes).
+
+**Step 1 — Concept extraction.** Decompose the lecture notes into atomic, individually-testable concepts. Not one card per paragraph — one card per fact/idea that's independently checkable. This is the unit the rest of the pipeline operates on.
+
+**Step 2 — Bundled content generation.** For each concept, generate the full `card.content` struct in one pass:
+```
+{ prompt, answer, context/explanation }
+```
+`context/explanation` is what LEARNING-phase exposure shows; `prompt/answer` is what REVIEW-phase testing uses. Generating both from the same concept in the same step is what keeps the two phases coherent instead of feeling like two disconnected features.
+
+**Step 3 — Seed initial difficulty.** Have the generation step output a rough complexity estimate (1–10) per concept and use it to seed `card.difficulty` instead of a flat default. You already have an LLM looking at the content; a first-pass difficulty guess costs nothing and gives FSRS a better starting point than assuming every card is equally hard, which matters a lot given how much difficulty varies between, say, a definitions-heavy lecture and a derivation-heavy one.
+
+**Step 4 — Density normalization.** Don't let raw LLM output decide how many cards a lecture produces. Target card count proportional to lecture length/note length, within min/max bounds (e.g. a floor so a short lecture still gets a handful of cards, a ceiling so a dense one doesn't generate 80). This directly protects R1 — session size is due-queue-driven, so if generation volume is noisy across lectures, "content scope" stops meaning anything real and due-queue size starts reflecting generation variance instead of actual course content.
+
+**Step 5 — Dedup across lectures.** Courses revisit concepts (unit 4 builds on something from unit 1). At generation time, compare each new concept against existing concepts in the same unit/class (embedding similarity is the standard approach) before creating a new card. Above threshold → treat as reinforcement of the existing card (link the lecture as an additional source, don't fork a duplicate). This matters because duplicate cards fragment review history and inflate the due queue with what is, functionally, the same test — exactly the kind of wasted repetition R1 is trying to avoid.
+
+**Step 6 — Publish state.** New cards enter as `state = NEW`, `generated_at = now`. They are *not* immediately due or shown — see §5 for how they get introduced.
+
+**Step 7 — Regeneration/versioning.** If a lecture's notes get edited or reprocessed, don't blow away existing cards. Match updated concepts back to existing cards by similarity: matched cards keep their spacing history even if wording is refined; only genuinely new concepts create new cards; concepts that disappeared get soft-deleted (archived, not hard-deleted) so review history and diagnostics stay intact.
+
+**Step 8 — Review/edit.** Recommend auto-publishing generated cards (don't gate on manual approval — that friction undermines the "review what you already learned" flow), but make every card trivially editable/deletable after the fact. Flagged as a decision in §9 if you'd rather require approval before cards go live.
+
+---
+
+## 4. Data Model (updated)
+
+**Per card:**
+
+| Field | Type | Notes |
+|---|---|---|
+| `id`, `lecture_id` | id | unit/class resolved via parent chain |
+| `concept_id` | id | groups reinforced cards from dedup (§3, Step 5) |
+| `content` | struct | `{ prompt, answer, context }` — populated at generation |
+| `state` | enum | `new \| learning \| review \| relearning` |
+| `stability` | float (days) | FSRS state |
+| `difficulty` | float (1–10) | seeded at generation (§3 Step 3), refined by FSRS thereafter |
+| `due_at` | datetime | next scheduled review |
+| `generated_at` | datetime | when the pipeline created it — content-scope tracking |
+| `first_exposed_at` | datetime, nullable | when the user actually saw it (NEW → LEARNING transition) |
+| `review_count`, `lapse_count` | int | |
+
+**Per user/course:** `exam_date` (nullable), `retention_target` (default 0.9), `max_reviews_per_item_per_week` (default 3), `max_new_cards_per_session` (default — see §9).
+
+---
+
+## 5. Review-Phase Scheduling
+
+Unchanged from before — use an existing FSRS library rather than reimplementing the memory model.
+
+**Exam-date ceiling**, applied on every scheduling call:
+```
+maxInterval = (exam_date - today) - EXAM_BUFFER_DAYS
+suggestedInterval = min(fsrs.interval, max(1, maxInterval))
+```
+
+**Cold-start override**, applied once per card at first graduation from LEARNING to REVIEW:
+```
+firstInterval = max(1, round(0.15 to 0.2 * daysUntilExam))
+```
+
+```pseudocode
+function scheduleNext(card, grade, examDate, today):
+    result = fsrs.review(card.stability, card.difficulty, grade, elapsedDays(card, today))
+    interval = result.interval
+
+    if card.state == LEARNING and card.review_count == 0 and examDate:
+        interval = coldStartInterval(examDate, today)
+
+    if examDate:
+        interval = min(interval, max(1, daysUntil(examDate, today) - EXAM_BUFFER_DAYS))
+
+    card.stability, card.difficulty = result.stability, result.difficulty
+    card.due_at = today + interval
+    card.state = grade.failed ? RELEARNING : REVIEW
+    card.review_count += 1
+    if grade.failed: card.lapse_count += 1
+    return card
+```
+
+---
+
+## 6. Session Composition — reworked for batch generation
+
+This is the actual integration fix. Previously, "new items" were treated as if they arrived one at a time. With a pipeline that generates a whole lecture's cards in one shot, `NEW` needs a real backlog and a pacing rule, not an assumption that everything is ready to learn immediately.
+
+```pseudocode
+function buildSession(user, today):
+    due = getCards(user, state in [REVIEW, RELEARNING], due_at <= today)
+    due = enforceWeeklyCap(due, user.max_reviews_per_item_per_week)
+
+    backlog = getCards(user, state == NEW)              // generated, not yet shown
+    fresh = takeFirst(backlog, user.max_new_cards_per_session)
+    markAsExposed(fresh)                                  // NEW → LEARNING, stamp first_exposed_at
+
+    session = due + fresh
+
+    if session.isEmpty():
+        session = getOptionalEarlyReview(user, today, limit=SMALL_N)  // flagged optional, never forced
+
+    return orderByWeakness(session)
+```
+
+`backlog` ordering matters: pull oldest-`generated_at`-first within a lecture, and prioritize by lecture order within a unit, so cards surface roughly in the sequence the material was taught — not in whatever order the generation pipeline happened to emit them.
+
+**Content-scope tracking for R1** now has a precise definition: "total content" for diagnostics/display purposes = all cards with `state != new` counted, i.e. everything actually introduced (NEW is backlog, not yet "covered" from the student's perspective, even though it exists in the system). Due-queue size (what actually drives session length) only ever includes REVIEW/RELEARNING cards, so it grows exactly in step with how much has actually been introduced and reviewed — which is what makes R1 hold without extra scaling logic. The weekly-per-card cap from before still stands as the guard against over-drilling a small early corpus.
+
+---
+
+## 7. Grading Input — unchanged
+
+- Minimum required signal: binary pass/fail. A 4-point scale is a nice-to-have, not a requirement.
+- Silent skip → default to a conservative grade ("Hard") rather than stalling the card.
+- Explicit **Browse mode** exists separately and never touches scheduling at all.
+
+---
+
+## 8. User-Directed Practice
+
+Manual **Practice mode** now naturally supports selection at class, unit, *or lecture* level, given the hierarchy in §1 — no extra schema needed, just query filters. As before: manual practice logs attempts for diagnostics but doesn't rewrite `stability`/`difficulty`/`due_at` by default (§9 has the alternative if you want it to).
+
+---
+
+## 9. Weak-Point Diagnostics
+
+Unchanged mechanics (maturity gate of ≥3 graded reviews before labeling anything "weak"; `lapse_count / review_count` threshold), but now rolls up cleanly through the hierarchy: lecture-level, unit-level, or class-level insight ("Lecture 3 in Unit 2 needs attention") all come from the same aggregation, just grouped at a different level of `lecture_id → unit_id → class_id`.
+
+---
+
+## 10. Open Product Decisions
+
+1. **Default grade on silent skip** — "Hard" recommended over "Good."
+2. **Should manual Practice-mode attempts affect the official schedule?** Recommended: no, diagnostics only.
+3. **`retention_target`** — 0.9 recommended (exam-day confidence over minimal review load).
+4. **`max_reviews_per_item_per_week`** — proposed default 3.
+5. **`max_new_cards_per_session`** — new decision. Proposed default: 10–15, or scale to roughly what the student can realistically absorb from one lecture's worth of content in one sitting. Too low and the backlog from an active week of lectures never clears; too high and you've recreated the cramming problem this whole system exists to avoid.
+6. **Publish-immediately vs. approve-before-publish** for generated cards (§3, Step 8) — recommended immediate publish with easy post-hoc editing.
+7. **Dedup similarity threshold** (§3, Step 5) — needs tuning once you see real false-positive/false-negative rates; start conservative (higher threshold, fewer merges) and loosen once you trust it.
+
+---
+
+## 11. Implementation Notes
+
+- Use an existing FSRS library rather than implementing the DSR model by hand.
+- `exam_date` lives on the course/unit record, nullable — absence just means standard indefinite-retention FSRS behavior elsewhere.
+- Concept extraction (§3, Step 1) and dedup (§3, Step 5) are the two steps most worth prototyping against real lecture notes early — they're the parts most likely to need tuning once you see actual output quality.

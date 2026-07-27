@@ -1,0 +1,258 @@
+# Pauken Redesign — Plan of Action
+
+**Context:** This app is a fork of an existing local-first study tool (codename "Pauken" in the current README). It is being rebuilt around a spaced-repetition-first philosophy — review what you've already learned, don't cram — and re-powered by DeepSeek. This document is the consolidated design decision record from planning discussion, intended as a spec/reference for implementation (originally scoped for handoff to opencode). It assumes the reader has the current README but not the codebase.
+
+**Scale note:** this is a small, personal-scope project — target is roughly **4 known users**, self-hosted on the owner's own home server, zero ongoing cost. This shapes several decisions below (auth, hosting, sync architecture) toward the simplest solution that fits that scale, rather than a generically "production-ready" public-product architecture.
+
+---
+
+## 1. Features to Cut
+
+These exist in the current codebase as inherited scope from the fork and are **not** wanted going forward.
+
+| Feature | Why it's cut |
+|---|---|
+| **Local AI mode** (Ollama, qwen2.5:3b, model provisioning, `LocalSetupModal`) | Not a use case going forward. App will be DeepSeek-only (cloud). Removes the entire provisioning lifecycle, binary downloads, keychain complexity for local keys, and the "Windows has no auto-setup" gap. |
+| **Podcast generation** (two-host script + TTS synthesis) | Unrelated to the core study loop; high token cost for low value relative to the app's purpose. |
+| **YouTube ingestion** (`ytdlp`, browser timedtext scraping, `/api/youtube-extract`) | Inherited scope, not aligned with the core use case (lecture notes / course material, not YouTube videos). |
+
+**Kept, but re-scoped:**
+
+- **Audio ingestion** — kept, because "upload a recorded lecture" is a real use case. OpenAI Whisper API is dropped in favor of a **self-hosted Whisper instance** (own server), removing the OpenAI dependency for this feature and giving cost control.
+
+---
+
+## 2. Core Pipeline Changes
+
+These are changes to the existing note → generation → practice pipeline, independent of the multi-user expansion.
+
+### 2.1 Per-concept (or small-batch) generation instead of one bundled call per note
+
+**Current:** `generateBundledContent` makes a single LLM call per note to produce all flashcards + MCQs for every extracted concept at once.
+
+**Change:** Move to per-concept or small-batch generation calls instead of one large bundled call. Bundling many concepts into a single generation call causes quality to degrade for concepts generated later in the output (attention dilution across a long structured-output response). Since DeepSeek is cheap per-token relative to the quality cost, this trade is worth making.
+
+**Status:** Approved. Implement.
+
+### 2.2 Written note-body summary becomes optional, not required
+
+**Current:** Pipeline always generates: note body → title → summary, and both title and summary generation are mandatory steps before study tools are generated.
+
+**Change:** The full generated written summary/review should be **optional** — a toggle the user can enable, not a default pipeline step. Default behavior should favor lightweight bullet-point extraction over a fully-rewritten narrative summary, since source material is consistently more trustworthy than an LLM's rewritten version of it (per original product judgment).
+
+**Important dependency:** the note body / summary currently feeds two downstream consumers:
+- Concept extraction (reads note body)
+- Chat context (`chatSystem` uses `studyContent(note)`, capped at 8000 tokens)
+
+Removing/making this optional requires deciding what feeds those two consumers when the full summary isn't generated. Recommendation: shift concept extraction and chat grounding toward **source text directly** (see 2.3), rather than an intermediate LLM-generated layer. This makes the "optional summary" trade-neutral instead of a regression, since the two things depending on it get a better source anyway.
+
+**Status:** Approved as optional/toggle. Don't over-invest engineering time here — it's a nice-to-have, not core.
+
+### 2.3 Source-grounded generation via embeddings (fill an existing gap)
+
+**Current:** `engine.embed()` exists in the `Engine` interface and is implemented for OpenAI/Local engines, but **no feature uses it**. Concept extraction and question generation currently work from LLM-generated note bodies, not raw source text — meaning there's no way to trace a generated flashcard back to the exact passage it came from.
+
+**Change:** Build the retrieval layer that was scaffolded but never used:
+1. Chunk and embed source material at ingestion time.
+2. Concept extraction and question/flashcard generation should retrieve and reference the actual source passage for a concept, not just the LLM-rewritten note body.
+3. Generated items (questions, flashcards) should carry a reference back to their source passage.
+
+**Why this matters beyond "nice architecture":** it directly supports the hallucination-reduction plan (Section 5) and gives users a "why is this the answer" view backed by real source text instead of a trusted-but-unverifiable model explanation.
+
+**Status:** Approved — high priority.
+
+### 2.4 Real review log (fixes the weekly-cap approximation)
+
+**Current:** The weekly per-item review cap (`session.ts`) is approximated using `lastReview` + `reps` on the question object itself, because there's no full append-only review history to query. This is called out as a known gap in the README.
+
+**Change:** Introduce (or confirm/harden, if `Attempt` records already exist and just aren't queried correctly) a durable, append-only review log — one row per review event, keyed by user + question + timestamp + rating. This log becomes the source of truth for:
+- Accurate weekly per-item caps (no more approximation)
+- "Why is this due today" transparency in the UI (surfacing review history to the user)
+- Review-history export (see Section 2.5 / export changes below)
+
+This is also required infrastructure for multi-user progress tracking (Section 3), since per-user review state needs to exist as rows keyed by `user_id`, not fields embedded on a single shared question object.
+
+**Status:** Approved — high priority, and shared foundation for two other features (weekly cap accuracy, multi-user schema).
+
+### 2.5 Export scope expansion
+
+**Current:** Export (Markdown/Word/PDF) only exports note content, not review/performance history.
+
+**Change:** Left to implementation discretion, but should include the option to export review history/performance data (review counts, streaks, mastery-over-time) alongside note content, once the review log (2.4) exists to source it from.
+
+**Status:** Approved, implementer's discretion on exact format.
+
+---
+
+## 3. Multi-User Architecture
+
+**Scale context (important, changes several decisions below):** this is not a public product. Target scale is roughly **4 known users** (the user + a small group of friends/partners), not an open-signup application. Several decisions that would be mandatory at public scale (managed auth providers, hosted databases, external reachability services) are explicitly **not required** at this scale and have been simplified accordingly. This is a deliberate, scale-appropriate design choice, not a shortcut.
+
+### 3.1 Accounts & auth
+
+- **No real auth system, no auth provider.** At 4 known users, full account infrastructure (signup flows, password reset, OAuth, session management) is unnecessary complexity. Instead: generate a static per-user key/token for each of the 4 people, and have the API check incoming requests against the small known set of valid keys. This is the right-sized solution for a closed group the owner personally knows, not a lesser version of "real" auth.
+- **Offline support is a stated future goal** but explicitly deferred — not a blocker for this phase. IndexedDB can remain as a client-side cache/offline layer later; for this phase, Postgres becomes the authoritative store.
+
+### 3.2 Data ownership model
+
+**Decision:** Classes belong to a user (an owner), but owners can invite other users to join. This is a shared-ownership model from day one, not single-owner-only:
+
+- `classes` — owned by a user (`owner_id`), but access is not limited to the owner.
+- `class_members` — join table: `user_id`, `class_id`, `role`. This is what makes invitation/sharing possible.
+- `notes`, `questions`, `flashcards` — belong to the **class** (shared content), not to an individual user. Any member of a class sees the same underlying content.
+- **Per-user progress/scheduling state** (FSRS fields: due, stability, difficulty, review log) — belongs to `(user_id, question_id)`, not to the question itself. This is what makes shared classes work correctly: the same question has independent scheduling state for each user reviewing it.
+
+### 3.3 Editing permissions
+
+**Decision:** All members of a shared class can edit (add notes, add questions, etc.), not just the owner.
+
+**Conflict resolution:** Explicitly deprioritized as a concern, but should be handled simply where possible:
+- Most editing in this app is **additive** (adding new notes/questions/units), which has no real conflict potential — two users adding different notes at the same time just results in two notes.
+- For the rarer case of two users directly editing the *same* object at the same time (e.g. editing note text), a simple **last-write-wins** guard is sufficient. Full operational-transform or CRDT-style live co-editing is **not** in scope — this app is not building real-time collaborative text editing, just safe concurrent access to shared study content.
+
+### 3.4 Chat context scope
+
+**Decision:** Chat stays scoped to a single note/context by default (focus is good — don't turn it into an unscoped everything-chat). However, it should support pulling in broader context (class/unit-level) when relevant, rather than being hard-capped to one note's content only. Exact mechanism (explicit user toggle vs. automatic broadening) is an implementation decision, not fully specified here.
+
+---
+
+## 4. Partner / Co-Study Feature
+
+Three distinct modes were identified, with different technical requirements. All three should be included in the plan; prioritization among them is left to the builder's discretion.
+
+### Mode A — Same device, shared session
+Two people on one computer; both answers count toward both users' progress. No real-time infrastructure needed — this is a client-side session attributed to two `user_id`s, writing two progress rows per answer instead of one. Cheapest to build; can follow directly once multi-user accounts exist.
+
+### LAN-direct sync — required feature, not optional
+
+**Decision:** When both users' devices are on the same local network, sync must happen **directly over the LAN**, without depending on the home server/backend being reachable at all for that session. One device runs a lightweight local server (e.g. a small embedded WebSocket server bundled into the app), and the other device connects to it via local IP — no external network hop, no dependency on backend uptime.
+
+This matters for two reasons:
+1. It removes the backend as a single point of failure for the most common co-study scenario (two people in the same room).
+2. It's meaningfully more reliable than round-tripping through the home server even when the home server is up, since it avoids the extra network hop entirely.
+
+This is **required**, not a nice-to-have layered on top of server-based sync — Modes B/C (below) should be understood as "the same sync mechanism, routed through the home server when devices aren't on the same LAN," with LAN-direct as the preferred path whenever both devices can reach each other locally.
+
+### Mode B — Synced session, separate devices
+Two users on separate devices/locations, moving through the same question set together in lockstep, with independently tracked answers.
+
+**UX (specified):**
+- Both users see the same question at the same time.
+- Each selects an answer choice and **locks in** with an explicit submit action (button, or Enter key as a shortcut for "submit selected answer").
+- Once **both** users have locked in their answer, the session automatically advances to the next question.
+- This requires a real-time backend component: a `session` object tracking current question index + per-participant lock-in state, synced live to both clients.
+
+### Mode C — Same mechanism, always-networked
+Functionally the same synced-session mechanism as Mode B (shared question cursor, lock-in-to-advance UX) — there is no separate "LAN mode" distinction; Mode B's infrastructure covers this case as well. Not a separate build.
+
+### Additional: Async/loosely-coupled co-study (separate from A/B/C)
+A lighter-weight feature, distinct from the synced-session modes above: two users share a class and progress through their own independent spaced-repetition queues at their own pace, with visibility into each other's activity (e.g., "your partner reviewed 12 cards today"). This needs no real-time sync — it's essentially the shared-class feature (Section 3) plus a small activity/progress feed. Should be included in the plan as its own item; it is the cheapest of all partner-related features to build and validates whether users want "studying together" as a concept before investing in Mode B's real-time infrastructure.
+
+**Recommended sequencing (for the builder's consideration, not a hard requirement):** the async feature and Mode A are cheap and can validate demand early; Mode B is the only one requiring real-time infrastructure and the most unresolved UX surface, so it's reasonable to sequence last.
+
+---
+
+## 5. Hallucination Mitigation
+
+Two distinct problems, addressed separately. The guiding constraint throughout: **reduce hallucination without materially increasing token cost** — specifically avoiding a second "verifier" LLM call architecture, which doubles cost for every generation.
+
+### 5.1 Generation-time hallucination (flashcards, questions, notes)
+
+1. **Source-grounded generation** — generate questions/flashcards from the actual retrieved source passage for a concept (via the embeddings/retrieval work in 2.3), not from an LLM-rewritten summary. Constrained generation against real source text hallucinates less than open generation from a secondary, already-lossy summary.
+2. **Schema-based self-citation** — extend the existing structured-output schemas (already in use for concept extraction and bundled content) to require the model to output which source passage/sentence a generated item is based on. This is a schema field addition, not a new LLM call. Enables cheap, non-LLM verification (e.g. string/substring or similarity checks between the citation and the actual passage) as an automated sanity check before an item enters rotation.
+3. **Minimize compounding through intermediate rewrites** — the riskiest point in the current pipeline is the note-body generation step (map-reduce over chunks), where invented claims can enter the pipeline and then get treated as ground truth by every downstream step (concept extraction, question generation). Keeping this step lightweight (per Section 2.2) and grounding downstream generation in source text directly (per 2.3) cuts off the main place errors are introduced and amplified.
+
+### 5.2 Chat-time hallucination
+
+- System prompt should explicitly instruct the model to answer only from provided material, and to **explicitly say when something isn't covered** rather than guessing. This costs no additional tokens and measurably reduces confident fabrication.
+- This rule applies regardless of whether chat context is note-scoped or broadened to class/unit-scope (Section 3.4) — scope size doesn't change the hallucination risk, only whether "not covered" is the honest answer more or less often.
+
+### 5.3 Explicitly rejected approach
+
+A second LLM call that fact-checks the first call's output was considered and rejected as the default strategy — it doubles token cost per generation for a benefit that's mostly already achievable via schema-based self-citation at near-zero marginal cost.
+
+---
+
+## 6. Backend & Hosting Plan
+
+**Revised approach:** the original recommendation (managed cloud services — Supabase, Railway/Fly.io/Render) was designed for a public-facing product with unpredictable scale. Given the actual target (~4 known users, zero budget, an existing home server the owner considers reliable), the plan has shifted to **fully self-hosted, no third-party paid or free-tier cloud services in the loop**.
+
+### Why managed free tiers were dropped (research findings)
+
+Free-tier terms were investigated directly (current as of mid-2026) and are less "free" than commonly assumed, which further supports self-hosting over depending on them:
+
+- **Supabase:** genuinely free indefinitely, but projects **pause after 7 days of database inactivity** and require a manual restore from the dashboard — not deleted, but not silently self-healing either.
+- **Railway:** effectively no free tier anymore — a 30-day/$5-credit trial, then a **$1/month minimum** ("Free" plan) with very tight resources, realistically pushing toward the $5/month Hobby tier.
+- **Fly.io:** free tier **removed entirely for new accounts** as of 2024. New signups get a short trial, then pay-as-you-go from day one.
+- **Render:** still free indefinitely for web services, but **spins down after 15 minutes of inactivity** (auto-recovers on next request, ~30-60s cold start, no manual step needed).
+
+None of these are true zero-cost, zero-maintenance options at the reliability bar a live partner-sync session needs. Self-hosting the whole stack gives the owner full control instead of being subject to a provider's inactivity policy.
+
+### Final architecture: self-hosted, no managed services
+
+| Layer | Choice | Why |
+|---|---|---|
+| **Database** | Postgres, self-hosted on the owner's home server (e.g. via Docker) | No managed DB needed at this scale. Full control, no pause/inactivity policies, no third party in the loop. |
+| **Auth** | Static per-user keys (see Section 3.1) | No auth provider needed — 4 known users, not public signup. |
+| **Real-time sync (partner modes, cross-network)** | Self-hosted WebSocket server, part of the same home-server-hosted API service | Covers Modes B/C (Section 4) when devices aren't on the same LAN. |
+| **LAN-direct sync** | Lightweight embedded server on one device, other device connects via local IP | **Required**, not optional (Section 4). Removes the home server as a dependency entirely when both users are in the same location — the most common co-study case. |
+| **App/API server** | Node/TypeScript service, self-hosted alongside Postgres on the same home server | No hosting platform needed; the owner's server runs everything. |
+| **DeepSeek API calls** | Called server-side only, from the home-server-hosted API — never from the client | Still a hard requirement even at 4 users: a client-side API key is a live security exposure regardless of user count. |
+| **Whisper (self-hosted, for audio ingestion)** | Runs on the same home server (or a separate box if load requires it) | Already planned as self-hosted; no change. |
+| **External reachability (cross-location sync)** | Owner's own responsibility (e.g. port forwarding, dynamic DNS) — **no tunnel service used** | Explicitly declined. Not required for LAN-direct sessions; the owner has chosen to handle external reachability independently rather than route through a third-party tunnel. |
+
+### Reliability plan (what happens if the home server goes down)
+
+- **Nightly `pg_dump` backup**, pushed to storage separate from the home server itself (e.g. a free-tier object storage bucket, or another machine), so a hardware failure costs at most a day of data, not everything.
+- **No live failover/warm standby** — explicitly decided against. Real-time replication to a second live instance is meaningful engineering effort not justified for a 4-person, pre-launch tool. If the home server is down, the app is down until the owner brings it back up; the backup ensures data isn't lost in that scenario, it just isn't instantly available.
+
+### Shape
+
+```
+Home server (self-hosted, single box)
+   ├── Postgres (source of truth)
+   ├── Node/TS API server
+   │     ├──► DeepSeek API (server-side key)
+   │     └──► Self-hosted Whisper
+   └── WebSocket server (partner sync, non-LAN case)
+
+Nightly: pg_dump → off-box backup storage
+
+Client devices:
+   ├── Same LAN as each other → connect directly, peer-to-peer, home server not required
+   └── Different networks → connect to home server (owner-managed external reachability)
+```
+
+This is a meaningfully smaller system than a managed-cloud architecture — one box, one database, no third-party services except optional off-box backup storage — and it fits the actual scale (4 known users) rather than being over-built for hypothetical growth.
+
+---
+
+## 7. Summary of Decisions
+
+| # | Item | Decision |
+|---|---|---|
+| 1 | Bundled per-note generation | Move to per-concept/small-batch calls |
+| 2 | Written summary/review | Make optional (toggle), not default; source-grounding replaces it as the default |
+| 3 | Embeddings/RAG | Build out — currently unused despite existing scaffolding |
+| 4 | Review log | Add durable append-only log; fixes weekly cap approximation, enables export, required for multi-user |
+| 5 | Local AI mode | Cut entirely |
+| 6 | Podcast generation | Cut entirely |
+| 7 | YouTube ingestion | Cut entirely |
+| 8 | Audio ingestion | Keep; move to self-hosted Whisper |
+| 9 | Chat scope | Keep note-scoped by default; support broader context on demand |
+| 10 | Export | Expand to include review history (implementer's discretion on format) |
+| 11 | Multi-user accounts | Build for ~4 known users; static per-user keys, no auth provider |
+| 12 | Class ownership/sharing | Owner + invitable members; shared content, per-user progress state |
+| 13 | Editing permissions | All members can edit; last-write-wins is sufficient conflict handling |
+| 14 | Partner Mode A (same device) | Include in plan |
+| 15 | Partner Mode B (synced, separate devices) | Include in plan; lock-in-to-advance UX as specified |
+| 16 | Partner Mode C | Same mechanism as B, not a separate build |
+| 17 | LAN-direct sync | **Required** feature; devices on same LAN sync peer-to-peer, bypassing the home server entirely |
+| 18 | Async co-study | Include in plan as a distinct, cheaper feature |
+| 19 | Hallucination mitigation | Source-grounding + schema self-citation + honest "not covered" chat behavior; no double-call verification |
+| 20 | Backend hosting | Fully self-hosted on owner's home server (Postgres + API + WebSocket + Whisper); no managed cloud services; no tunnel service |
+| 21 | Reliability plan | Nightly `pg_dump` to off-box storage; no live failover (explicitly declined at this scale) |
+
+---
+
+*End of report.*
