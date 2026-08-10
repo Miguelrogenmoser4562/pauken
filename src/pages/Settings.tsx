@@ -207,7 +207,7 @@ export default function Settings() {
                   <input
                     value={serverUrl}
                     onChange={(e) => setServerUrl(e.target.value)}
-                    placeholder="Server URL (e.g. https://pauken.memorax.us:4181)"
+                    placeholder="Server URL (e.g. https://pauken.memorax.us)"
                     className="w-full bg-transparent text-sm outline-none placeholder:text-ink-faint"
                   />
                 </div>

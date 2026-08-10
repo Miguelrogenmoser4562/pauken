@@ -5,7 +5,7 @@ import { useApp } from "../lib/app";
 import { serverHealth, verifyKey } from "../lib/api";
 import { getEnginePrefs } from "../lib/prefs";
 
-const DEFAULT_SERVER = "https://pauken.memorax.us:4181";
+const DEFAULT_SERVER = "https://pauken.memorax.us";
 
 export default function Onboarding() {
   const navigate = useNavigate();
@@ -70,7 +70,7 @@ export default function Onboarding() {
         <div className="flex items-center gap-2 rounded-xl border border-edge bg-card px-4 py-3 shadow-soft">
           <Server className="size-4 shrink-0 text-ink-faint" />
           <input
-            value={useDefault ? "memorax (pauken.memorax.us:4181)" : serverUrl}
+            value={useDefault ? "memorax (pauken.memorax.us)" : serverUrl}
             onChange={(e) => {
               if (!useDefault) {
                 setCustomUrl(e.target.value);
