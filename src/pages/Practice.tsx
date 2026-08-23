@@ -811,7 +811,16 @@ export default function Practice() {
     if (coStudyMode === "synced" && wsClient?.connected) return;
 
     const pool = mode === "browse" ? browseQuestions : mergedQuestions;
-    if (pool.length === 0) return;
+    if (pool.length === 0) {
+      /* The selected class has no questions — clear any leftover session from
+         a previously selected class so its questions don't linger. */
+      setSessionQueue([]);
+      setSession(null);
+      setCurrentIndex(0);
+      setFlipped(false);
+      setSelectedOption(null);
+      return;
+    }
 
     if (mode === "browse") {
       setSession({ due: pool, newItems: [], total: pool.length });
@@ -1215,11 +1224,22 @@ export default function Practice() {
   }, [mergedQuestions, browseQuestions, mode]);
 
   /* ---- Class selector ---- */
+  /* Clear any active session state so a class switch never shows stale
+     questions from the previously selected class. */
+  function resetSession() {
+    setSessionQueue([]);
+    setSession(null);
+    setCurrentIndex(0);
+    setFlipped(false);
+    setSelectedOption(null);
+  }
+
   function handleClassChange(id: string) {
     /* Leave a synced session only when switching to a DIFFERENT class than
        the session belongs to (rejoining + re-picking the session's class
        must not kill the session). */
     if (id !== selectedClassId && wsClient && id !== syncSessionStore.getIdentity()?.classId) leaveSyncSession();
+    resetSession();
     setSelectedClassId(id || null);
     setSelectedFolderId(null);
     setSelectedTopic(null);
@@ -1295,6 +1315,7 @@ export default function Practice() {
                   value={selectedClassId || ""}
                   onChange={(e) => {
                     const v = e.target.value;
+                    resetSession();
                     setSelectedClassId(v || null);
                     if (v) writeLastClassId(v);
                   }}

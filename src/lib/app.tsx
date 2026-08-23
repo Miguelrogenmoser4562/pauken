@@ -202,6 +202,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
 
       await reconcileJobs(r).catch(() => {});
+      await r.pruneOrphans().catch(() => {});
       const e = await buildEngine().catch(() => null);
       if (!alive) return;
       setEngine(e);

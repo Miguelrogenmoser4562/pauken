@@ -41,6 +41,8 @@ export class DeepSeekEngine implements Engine {
     const decoder = new TextDecoder();
     let buffer = "";
     let full = "";
+    let finishReason: string | undefined;
+    let sawReasoning = false;
 
     try {
       while (true) {
@@ -56,11 +58,14 @@ export class DeepSeekEngine implements Engine {
           if (!data || data === "[DONE]") continue;
           try {
             const json = JSON.parse(data);
-            const delta: string | undefined = json.choices?.[0]?.delta?.content;
+            const choice = json.choices?.[0];
+            const delta: string | undefined = choice?.delta?.content;
             if (delta) {
               full += delta;
               onToken?.(delta);
             }
+            if (choice?.delta?.reasoning_content) sawReasoning = true;
+            if (choice?.finish_reason) finishReason = choice.finish_reason;
           } catch {
             /* skip malformed SSE chunk */
           }
@@ -71,6 +76,14 @@ export class DeepSeekEngine implements Engine {
         throw new EngineError("DeepSeek response stream interrupted.", "network");
       }
       throw err;
+    }
+    if (!full.trim() && finishReason !== undefined) {
+      throw new EngineError(
+        `DeepSeek returned no content (finish_reason=${finishReason}` +
+          (sawReasoning ? ", model produced only reasoning tokens)" : ")") +
+          ". The response stream carried no usable text.",
+        "unknown",
+      );
     }
     return full;
   }
@@ -101,7 +114,12 @@ export class DeepSeekEngine implements Engine {
     const choice = json.choices?.[0];
     const toolCall = choice?.message?.tool_calls?.[0];
     if (!toolCall || toolCall.function?.name !== toolName) {
-      throw new EngineError("DeepSeek did not return a structured tool call.", "unknown");
+      const raw = JSON.stringify(json);
+      throw new EngineError(
+        `DeepSeek did not return a structured tool call (${toolName}). ` +
+          `Model: ${this.resolveModel(opts.tier)}. Raw: ${raw.slice(0, 1000)}`,
+        "unknown",
+      );
     }
     return JSON.parse(toolCall.function.arguments) as T;
   }
@@ -214,15 +232,19 @@ function toNetworkError(err: unknown): EngineError {
 
 async function mapError(res: Response): Promise<EngineError> {
   let message = res.statusText || "DeepSeek request failed.";
+  let raw = "";
   try {
     const body = await res.json();
-    if (body?.error?.message) message = body.error.message;
+    raw = JSON.stringify(body);
+    const em = body?.error?.message;
+    if (typeof em === "string" && em) message = em;
   } catch {
-    /* body wasn't JSON */
+    raw = "";
   }
-  if (res.status === 401) return new EngineError(message, "auth");
-  if (res.status === 402) return new EngineError(message, "quota");
-  if (res.status === 429) return new EngineError(message, "rate_limit");
-  if (res.status === 403) return new EngineError(message, "model_missing");
-  return new EngineError(message, "unknown");
+  const suffix = raw ? `\nRaw response: ${raw.slice(0, 1000)}` : "";
+  if (res.status === 401) return new EngineError(message + suffix, "auth");
+  if (res.status === 402) return new EngineError(message + suffix, "quota");
+  if (res.status === 429) return new EngineError(message + suffix, "rate_limit");
+  if (res.status === 403) return new EngineError(message + suffix, "model_missing");
+  return new EngineError(message + suffix, "unknown");
 }

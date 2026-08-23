@@ -168,7 +168,14 @@ export default function Dashboard() {
         setNotes(ns);
         setClasses(cs);
         setFolders(fs);
-        setReminders(rs.filter((r) => !r.completed || (r.completedAt && Date.now() - r.completedAt < 86400000)));
+        const classIds = new Set(cs.map((c) => c.id));
+        setReminders(
+          rs.filter(
+            (r) =>
+              (!r.classId || classIds.has(r.classId)) &&
+              (!r.completed || (r.completedAt && Date.now() - r.completedAt < 86400000)),
+          ),
+        );
         setReady(true);
       });
     }

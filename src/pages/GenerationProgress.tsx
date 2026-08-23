@@ -39,6 +39,7 @@ export default function GenerationProgress() {
   const [done, setDone] = useState(false);
   const [noteId, setNoteId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showDetails, setShowDetails] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [sectionInfo, setSectionInfo] = useState<{ current: number; total: number } | null>(null);
   const [avgSection, setAvgSection] = useState<number | null>(null);
@@ -167,7 +168,24 @@ export default function GenerationProgress() {
           <AlertCircle className="size-8 text-danger-ink" />
         </span>
         <h1 className="text-2xl font-bold">Generation failed</h1>
-        <p className="max-w-md text-center text-sm text-ink-dim">{error}</p>
+        <p className="max-w-md text-center text-sm text-ink-dim">
+          {error.split("\n")[0]}
+        </p>
+        {error.includes("\n") && (
+          <div className="w-full max-w-md rounded-card border border-edge bg-panel p-3 text-left">
+            <button
+              onClick={() => setShowDetails((s) => !s)}
+              className="mb-1 text-xs font-semibold text-accent hover:underline"
+            >
+              {showDetails ? "Hide" : "Show"} full error details
+            </button>
+            {showDetails && (
+              <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded-md bg-black/90 p-3 font-mono text-xs text-green-300">
+                {error}
+              </pre>
+            )}
+          </div>
+        )}
         <button
           onClick={() => navigate("/")}
           className="rounded-xl bg-accent px-6 py-2.5 font-semibold text-white shadow-soft hover:opacity-90"

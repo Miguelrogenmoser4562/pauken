@@ -38,6 +38,8 @@ export class ProxyEngine implements Engine {
     const decoder = new TextDecoder();
     let buffer = "";
     let full = "";
+    let finishReason: string | undefined;
+    let sawReasoning = false;
 
     try {
       while (true) {
@@ -53,11 +55,14 @@ export class ProxyEngine implements Engine {
           if (!data || data === "[DONE]") continue;
           try {
             const json = JSON.parse(data);
-            const delta: string | undefined = json.choices?.[0]?.delta?.content;
+            const choice = json.choices?.[0];
+            const delta: string | undefined = choice?.delta?.content;
             if (delta) {
               full += delta;
               onToken?.(delta);
             }
+            if (choice?.delta?.reasoning_content) sawReasoning = true;
+            if (choice?.finish_reason) finishReason = choice.finish_reason;
           } catch {}
         }
       }
@@ -66,6 +71,14 @@ export class ProxyEngine implements Engine {
         throw new EngineError("Stream interrupted.", "network");
       }
       throw err;
+    }
+    if (!full.trim() && finishReason !== undefined) {
+      throw new EngineError(
+        `Server returned no content (finish_reason=${finishReason}` +
+          (sawReasoning ? ", model produced only reasoning tokens)" : ")") +
+          ". The response stream carried no usable text.",
+        "unknown",
+      );
     }
     return full;
   }
@@ -96,7 +109,12 @@ export class ProxyEngine implements Engine {
     const choice = json.choices?.[0];
     const toolCall = choice?.message?.tool_calls?.[0];
     if (!toolCall || toolCall.function?.name !== toolName) {
-      throw new EngineError("Server did not return a structured tool call.", "unknown");
+      const raw = JSON.stringify(json);
+      throw new EngineError(
+        `Server did not return a structured tool call (${toolName}). ` +
+          `Model: ${this.resolveModel(opts.tier)}. Raw: ${raw.slice(0, 1000)}`,
+        "unknown",
+      );
     }
     return JSON.parse(toolCall.function.arguments) as T;
   }
@@ -138,9 +156,20 @@ export class ProxyEngine implements Engine {
       });
       clearTimeout(timeout);
       if (!res.ok) {
-        const errBody = await res.json().catch(() => ({}));
-        const msg = errBody?.error?.message || errBody?.error || `Server returned ${res.status}`;
-        throw new EngineError(msg, mapStatus(res.status));
+        let msg = `Server returned ${res.status}`;
+        let raw = "";
+        try {
+          const errBody = await res.json();
+          raw = JSON.stringify(errBody);
+          msg =
+            errBody?.error?.message ||
+            errBody?.error ||
+            (typeof errBody?.message === "string" ? errBody.message : msg);
+        } catch {
+          raw = await res.text().catch(() => "");
+        }
+        const suffix = raw ? `\nRaw response: ${raw.slice(0, 1000)}` : "";
+        throw new EngineError(msg + suffix, mapStatus(res.status));
       }
       return res;
     } catch (err) {

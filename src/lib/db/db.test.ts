@@ -236,6 +236,53 @@ describe("Repo over memoryStore", () => {
     expect(await repo.getNote("note-orphan")).toBeDefined();
   });
 
+  it("pruneOrphans removes reminders and syllabi whose class is already gone but keeps others", async () => {
+    const repo = new Repo(memoryStore());
+    await repo.putClass({ id: "cls-1", name: "Biology", ownerId: "u1", createdAt: 1, updatedAt: 1 });
+    await repo.putReminder({ id: "rem-orphan", title: "Orphan", text: "", classId: "cls-deleted", completed: false, createdAt: 1, updatedAt: 1 });
+    await repo.putReminder({ id: "rem-kept", title: "Kept", text: "", classId: "cls-1", completed: false, createdAt: 1, updatedAt: 1 });
+    await repo.putReminder({ id: "rem-global", title: "Global", text: "", completed: false, createdAt: 1, updatedAt: 1 });
+    await repo.putSyllabus({
+      id: "syl-orphan",
+      classId: "cls-deleted",
+      courseTitle: "Orphan",
+      instructors: [],
+      teachingAssistants: [],
+      grading: [],
+      topics: [],
+      policies: [],
+      events: [],
+      rawText: "",
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await repo.putSyllabus({
+      id: "syl-kept",
+      classId: "cls-1",
+      courseTitle: "Kept",
+      instructors: [],
+      teachingAssistants: [],
+      grading: [],
+      topics: [],
+      policies: [],
+      events: [],
+      rawText: "",
+      createdAt: 1,
+      updatedAt: 1,
+    });
+
+    const removed = await repo.pruneOrphans();
+
+    expect(removed).toBe(2);
+    expect(await repo.listReminders()).toEqual([
+      expect.objectContaining({ id: "rem-kept" }),
+      expect.objectContaining({ id: "rem-global" }),
+    ]);
+    expect(await repo.listSyllabi()).toEqual([
+      expect.objectContaining({ id: "syl-kept" }),
+    ]);
+  });
+
   it("where() performs a shallow equality match", async () => {
     const store = memoryStore();
     await store.put(COLLECTIONS.flashcards, makeCard({ id: "c-1", noteId: "n-1", topic: "biology" }));

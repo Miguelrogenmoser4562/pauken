@@ -77,7 +77,7 @@ function dueFromParts(dateInputVal: string, timeInputVal: string): number {
 }
 
 export default function CalendarPage() {
-  const { repo } = useApp();
+  const { repo, version } = useApp();
   const [reminders, setReminders] = useState<Reminder[]>([]);
   const [syllabi, setSyllabi] = useState<Syllabus[]>([]);
   const [classes, setClasses] = useState<ClassEntity[]>([]);
@@ -108,7 +108,7 @@ export default function CalendarPage() {
 
   useEffect(() => {
     reload();
-  }, [repo]);
+  }, [repo, version]);
 
   const classById = useMemo(
     () => new Map(classes.map((c) => [c.id, c.name])),
@@ -136,6 +136,7 @@ export default function CalendarPage() {
        cannot hide the clickable chip behind a read-only span. */
     for (const r of reminders) {
       if (r.dueDate === undefined) continue;
+      if (r.classId && !classById.has(r.classId)) continue;
       if (classFilter && r.classId && !classFilter.has(r.classId)) continue;
       seen.add(`${r.classId ?? ""}|${r.title}|${startOfDay(r.dueDate)}`);
       add({
@@ -150,6 +151,7 @@ export default function CalendarPage() {
       });
     }
     for (const s of syllabi) {
+      if (s.classId && !classById.has(s.classId)) continue;
       if (classFilter && !classFilter.has(s.classId)) continue;
       for (const e of s.events) {
         if (e.dateStart === undefined) continue;
@@ -170,7 +172,7 @@ export default function CalendarPage() {
       arr.sort((a, b) => (a.time ?? "").localeCompare(b.time ?? ""));
     }
     return out;
-  }, [syllabi, reminders, classFilter]);
+  }, [syllabi, reminders, classFilter, classById]);
 
   const cells = monthGrid(view.year, view.month);
 

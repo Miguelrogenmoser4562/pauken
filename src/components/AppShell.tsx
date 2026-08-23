@@ -28,7 +28,7 @@ const navItems = [
 ];
 
 export default function AppShell() {
-  const { repo, user, prefs } = useApp();
+  const { repo, user, prefs, version } = useApp();
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
   const [classes, setClasses] = useState<ClassEntity[]>([]);
@@ -50,7 +50,7 @@ export default function AppShell() {
       setFolders(fs);
       setNotes(ns);
     });
-  }, [repo]);
+  }, [repo, version]);
 
   async function createClass() {
     if (!repo || !newClassName.trim()) return;

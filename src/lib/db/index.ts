@@ -266,6 +266,30 @@ export class Repo {
   deleteReminder = (id: string) => this.store.delete(COLLECTIONS.reminders, id);
   remindersForClass = (classId: string) =>
     this.store.where<Reminder>(COLLECTIONS.reminders, { classId } as Partial<Reminder>);
+  /* Removes reminders and syllabi whose class has already been deleted (e.g. a
+     class was removed before this cleanup existed). Returns the number of
+     orphans removed. */
+  pruneOrphans = async (): Promise<number> => {
+    const [reminders, syllabi, classes] = await Promise.all([
+      this.store.all<Reminder>(COLLECTIONS.reminders),
+      this.store.all<Syllabus>(COLLECTIONS.syllabi),
+      this.store.all<ClassEntity>(COLLECTIONS.classes),
+    ]);
+    const classIds = new Set(classes.map((c) => c.id));
+    const orphanReminders = reminders.filter(
+      (r) => r.classId && !classIds.has(r.classId),
+    );
+    const orphanSyllabi = syllabi.filter(
+      (s) => s.classId && !classIds.has(s.classId),
+    );
+    await Promise.all([
+      ...orphanReminders.map((r) =>
+        this.store.delete(COLLECTIONS.reminders, r.id),
+      ),
+      ...orphanSyllabi.map((s) => this.store.delete(COLLECTIONS.syllabi, s.id)),
+    ]);
+    return orphanReminders.length + orphanSyllabi.length;
+  };
 
   // syllabi
   listSyllabi = () => this.store.all<Syllabus>(COLLECTIONS.syllabi);
