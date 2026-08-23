@@ -13,6 +13,8 @@ const defaults: EnginePrefs = {
   language: "English",
   defaultReminderTime: "08:00",
   avatar: "",
+  showPartnerPick: true,
+  screenMode: "follow",
 };
 
 export function getEnginePrefs(): EnginePrefs {

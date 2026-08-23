@@ -159,6 +159,83 @@ describe("Repo over memoryStore", () => {
     expect((await repo.chatFor(otherId)).map((t) => t.id)).toEqual(["chat-other"]);
   });
 
+  it("deleteClass removes the class and everything associated with it", async () => {
+    const repo = new Repo(memoryStore());
+    const classId = "cls-1";
+    const otherClassId = "cls-2";
+    const folderId = "folder-1";
+    const noteId = "note-1";
+    const questionId = "q-1";
+    const due = 4_100_000_000_000;
+
+    await repo.putClass({ id: classId, name: "Biology", ownerId: "u1", createdAt: 1, updatedAt: 1 });
+    await repo.putClass({ id: otherClassId, name: "Chemistry", ownerId: "u2", createdAt: 1, updatedAt: 1 });
+    await repo.putFolder({ id: folderId, name: "Unit 1", classId, createdAt: 1 });
+    await repo.putNote(makeNote({ id: noteId, folderId }));
+    await repo.putNote(makeNote({ id: "note-orphan" }));
+    await repo.putFlashcards([makeCard({ id: "card-1", noteId })]);
+    await repo.putQuestions([makeQuestion({ id: questionId, noteId })]);
+    await repo.putAttempt(makeAttempt({ id: "attempt-1", noteId }));
+    await repo.putChat(makeChatTurn({ id: "chat-1", noteId }));
+    await repo.putChunk({ id: "chunk-1", noteId, index: 0, text: "x", charStart: 0, charEnd: 1 });
+    await repo.putReviewLog({
+      id: "log-1",
+      questionId,
+      rating: "good",
+      stateBefore: { state: "new", due, stability: 0, fsrsDifficulty: 5, reps: 0, lapses: 0 },
+      stateAfter: { state: "learning", due: due + 86400000, stability: 1, fsrsDifficulty: 5, reps: 1, lapses: 0 },
+      at: 1,
+    });
+    await repo.putProgress({
+      id: "prog-1",
+      userId: "u1",
+      questionId,
+      state: "new",
+      due,
+      stability: 0,
+      fsrsDifficulty: 5,
+      reps: 0,
+      lapses: 0,
+    });
+    await repo.putSyllabus({
+      id: "syl-1",
+      classId,
+      courseTitle: "Biology",
+      instructors: [],
+      teachingAssistants: [],
+      grading: [],
+      topics: [],
+      policies: [],
+      events: [],
+      rawText: "",
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await repo.putReminder({ id: "rem-1", title: "Exam", text: "", classId, completed: false, createdAt: 1, updatedAt: 1 });
+    await repo.putClassMember({ id: "cm-1", classId, userId: "u1", role: "owner", status: "active", joinedAt: 1 });
+    await repo.putActivityEvent({ id: "act-1", classId, userId: "u1", userName: "A", type: "attempt", details: "x", at: 1 });
+
+    await repo.deleteClass(classId);
+
+    expect(await repo.getClass(classId)).toBeUndefined();
+    expect(await repo.getNote(noteId)).toBeUndefined();
+    expect(await repo.cardsForNote(noteId)).toEqual([]);
+    expect(await repo.questionsFor(noteId)).toEqual([]);
+    expect(await repo.attemptsFor(noteId)).toEqual([]);
+    expect(await repo.chatFor(noteId)).toEqual([]);
+    expect(await repo.chunksForNote(noteId)).toEqual([]);
+    expect(await repo.reviewLogsForQuestion(questionId)).toEqual([]);
+    expect(await repo.progressForQuestion(questionId)).toEqual([]);
+    expect(await repo.remindersForClass(classId)).toEqual([]);
+    expect(await repo.syllabusForClass(classId)).toBeUndefined();
+    expect(await repo.foldersForClass(classId)).toEqual([]);
+    expect(await repo.membersForClass(classId)).toEqual([]);
+    expect(await repo.activityForClass(classId)).toEqual([]);
+
+    expect(await repo.getClass(otherClassId)).toBeDefined();
+    expect(await repo.getNote("note-orphan")).toBeDefined();
+  });
+
   it("where() performs a shallow equality match", async () => {
     const store = memoryStore();
     await store.put(COLLECTIONS.flashcards, makeCard({ id: "c-1", noteId: "n-1", topic: "biology" }));

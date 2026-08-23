@@ -7,6 +7,7 @@ import {
   Copy,
   Download,
   Pencil,
+  RefreshCw,
   Server,
   Settings as SettingsIcon,
   Users,
@@ -16,6 +17,8 @@ import {
 import { useApp } from "../lib/app";
 import { exportMarkdown, downloadText } from "../lib/export";
 import { serverHealth, verifyKeyWithError, fetchAdminUsers, deleteUserData, resetDatabase, createUser, updateAdminUser, updateMyAvatar } from "../lib/api";
+import { checkForUpdates } from "../lib/updates";
+import type { UpdateInfo } from "../lib/updates";
 import type { PaukenUser } from "../lib/types";
 
 const DATA_FOLDER = (() => {
@@ -45,6 +48,18 @@ export default function Settings() {
   const [adminMsg, setAdminMsg] = useState("");
   const [newUserName, setNewUserName] = useState("");
   const [newUserResult, setNewUserResult] = useState<string | null>(null);
+
+  /* Update check state */
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [checking, setChecking] = useState(false);
+
+  async function checkUpdates() {
+    setChecking(true);
+    setUpdateInfo(null);
+    const info = await checkForUpdates();
+    setUpdateInfo(info);
+    setChecking(false);
+  }
 
   const handleAvatarPicked = (files: FileList | null) => {
     const file = files?.[0];
@@ -431,6 +446,58 @@ export default function Settings() {
               </button>
               {exportMsg && <span className="text-sm text-ink-faint">{exportMsg}</span>}
             </div>
+          </div>
+
+          {/* Updates */}
+          <div className="rounded-card border border-edge bg-card p-6 shadow-soft">
+            <h2 className="flex items-center gap-2 font-display text-xl font-bold">
+              <RefreshCw className="size-5 text-accent" />
+              Updates
+            </h2>
+            <p className="mt-1 text-sm text-ink-faint">
+              You're on v{__APP_VERSION__}. Check GitHub for a newer release —
+              updates download here and install like a fresh install.
+            </p>
+            <div className="mt-4 flex items-center gap-3">
+              <button
+                onClick={() => void checkUpdates()}
+                disabled={checking}
+                className="rounded-xl bg-accent px-4 py-2 text-sm font-bold text-white hover:bg-accent-hover disabled:opacity-60"
+              >
+                {checking ? "Checking…" : "Check for updates"}
+              </button>
+              {updateInfo?.isUpdate && (updateInfo.assetUrl ?? updateInfo.latestUrl) && (
+                <button
+                  onClick={() => window.open(updateInfo.assetUrl ?? updateInfo.latestUrl!, "_blank")}
+                  className="rounded-xl border border-edge bg-panel px-4 py-2 text-sm font-semibold shadow-soft hover:bg-card-hover"
+                >
+                  <Download className="mr-1 inline size-4" />
+                  Download v{updateInfo.latest}
+                </button>
+              )}
+            </div>
+            {updateInfo && (
+              <div className="mt-3 flex items-center gap-2 text-sm">
+                {updateInfo.isUpdate ? (
+                  <>
+                    <CheckCircle2 className="size-4 text-accent" />
+                    <span className="font-semibold text-accent">Update available: v{updateInfo.latest}</span>
+                  </>
+                ) : updateInfo.error ? (
+                  <>
+                    <AlertCircle className="size-4 text-danger-ink" />
+                    <span className="font-semibold text-danger-ink">
+                      Couldn't check for updates: {updateInfo.error}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="size-4 text-green-600" />
+                    <span className="font-semibold text-green-600">You're up to date.</span>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>

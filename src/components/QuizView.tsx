@@ -18,6 +18,7 @@ import { masteryByTopic, masteryColor, type TopicMastery } from "../lib/study/ma
 import { now, uuid } from "../lib/ids";
 import type { Note, QuizAttempt, QuizQuestion } from "../lib/types";
 import SourceCitation from "./SourceCitation";
+import OptionList from "./OptionList";
 
 interface AnsweredState {
   chosen: number | string;
@@ -38,6 +39,7 @@ export default function QuizView({
   const [attempts, setAttempts] = useState<QuizAttempt[]>([]);
   const [answered, setAnswered] = useState<Record<string, AnsweredState>>({});
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [resetCounter, setResetCounter] = useState(0);
 
   const [count, setCount] = useState(10);
   const [generating, setGenerating] = useState(false);
@@ -128,6 +130,7 @@ export default function QuizView({
     setAttempts([]);
     setAnswered({});
     setDrafts({});
+    setResetCounter((c) => c + 1);
   }
 
   if (!content.trim()) {
@@ -217,7 +220,7 @@ export default function QuizView({
             </div>
             {questions.map((q, i) => (
               <QuestionCard
-                key={q.id}
+                key={`${q.id}-${resetCounter}`}
                 index={i}
                 q={q}
                 answer={answered[q.id]}
@@ -263,6 +266,16 @@ function QuestionCard({
   onOpenSource?: (noteId: string, start: number, end: number) => void;
 }) {
   const isAnswered = !!answer;
+  const [eliminated, setEliminated] = useState<Set<number>>(new Set());
+
+  const toggleEliminate = (i: number) => {
+    setEliminated((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  };
 
   return (
     <div className="rounded-card border border-edge bg-card p-6 shadow-soft">
@@ -297,30 +310,16 @@ function QuestionCard({
           </button>
         </div>
       ) : (
-        <div className="mt-4 grid gap-2 sm:grid-cols-2">
-          {q.options.map((opt, i) => {
-            let cls = "border-edge bg-panel hover:bg-card-hover";
-            if (isAnswered) {
-              if (i === q.correctIndex) {
-                cls = "border-transparent bg-success-soft text-ink";
-              } else if (i === answer.chosen) {
-                cls = "border-transparent bg-danger-soft text-danger-ink";
-              } else {
-                cls = "border-edge bg-panel text-ink-faint opacity-60";
-              }
-            }
-            return (
-              <button
-                key={i}
-                disabled={isAnswered}
-                onClick={() => onAnswer(i)}
-                className={`rounded-xl border px-4 py-2.5 text-left text-sm font-semibold ${cls}`}
-              >
-                {opt}
-              </button>
-            );
-          })}
-        </div>
+        <OptionList
+          options={q.options}
+          correctIndex={q.correctIndex}
+          selected={typeof answer?.chosen === "number" ? answer.chosen : null}
+          reveal={isAnswered}
+          disabled={isAnswered}
+          onSelect={onAnswer}
+          eliminated={eliminated}
+          onToggleEliminate={isAnswered ? undefined : toggleEliminate}
+        />
       )}
 
       {isAnswered && q.explanation && (

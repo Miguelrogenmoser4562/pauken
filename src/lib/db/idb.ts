@@ -5,7 +5,7 @@
 import { openDB, type IDBPDatabase } from "idb";
 import { COLLECTIONS, type Store } from "./index";
 
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 export async function idbStore(name = "pauken"): Promise<Store> {
   const db: IDBPDatabase = await openDB(name, DB_VERSION, {

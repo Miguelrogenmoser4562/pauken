@@ -232,3 +232,13 @@ html::-webkit-scrollbar-thumb {
 html::-webkit-scrollbar-thumb:hover {
   background: var(--pauken-ink-faint);
 }
+
+/* Scrollable area with NO visible scrollbar (used on the practice page so
+   long questions/sources stay reachable without the bar showing). */
+.scrollbar-hidden {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+}

@@ -366,3 +366,167 @@ export const perConceptSchema = {
     },
   },
 } as const;
+
+/* ---- Syllabus ----------------------------------------------------------- */
+
+export function syllabusSystem(hints: {
+  className?: string;
+  termHint?: string;
+}): string {
+  const hintLines: string[] = [];
+  if (hints.className) hintLines.push(`The class name is "${hints.className}".`);
+  if (hints.termHint) hintLines.push(`The class term appears to be "${hints.termHint}".`);
+  const hintBlock = hintLines.length > 0 ? hintLines.join("\n") + "\n" : "";
+  return [
+    "You extract structured information from a university course syllabus.",
+    hintBlock,
+    "Return course metadata, instructors, grading, topics, policies, and EVERY dated",
+    "assessment (exams, quizzes, homeworks, final exams, breaks) listed in the",
+    "document — including dates found in a course-calendar table.",
+    "",
+    "Date handling:",
+    "- Convert every date to an explicit ISO date string (YYYY-MM-DD), using the",
+    "  year stated by the term (e.g. 'Fall 2026' → 2026). If no year is derivable,",
+    "  use an empty string for the date fields rather than guessing.",
+    "- For a week range like 'Aug 24-28', use the first day of the stated range",
+    "  as dateStart and the last day as dateEnd. The exact due date is then",
+    "  unknown — the user is warned and may fix it.",
+    "- For a specific date like 'Thursday, September 24', use that exact date for",
+    "  both dateStart and dateEnd, and put the time (e.g. '18:45') in `time` if",
+    "  stated.",
+    "- When the same assessment appears in both prose and the calendar table,",
+    "  prefer the explicit date in prose.",
+    "- Never invent dates, times, or rooms that are not in the document.",
+    "",
+    "Assessment rules:",
+    "- `kind` is one of: exam, quiz, final, homework, break, other.",
+    "- Keep titles exactly as written ('Exam 1', 'Quiz 7', 'Final Exam').",
+    "- List each homework separately: 'Homeworks 1ABC' becomes Homework 1A,",
+    "  Homework 1B, Homework 1C.",
+    "",
+    "Other rules:",
+    "- `grading` lists each grade category with its weight as a number (e.g. 15).",
+    "- `gradeScale` lists letter-grade cutoffs as minimum percentages.",
+    "- `topics` groups the course's learning objectives by unit.",
+    "- `policies` is short bullet summaries (late work, makeup, retakes, AI usage,",
+    "  attendance).",
+    "- `instructors` and `teachingAssistants` are people with name, email, and",
+    "  office when present.",
+    "- Be precise and complete; omission is better than hallucination.",
+    "",
+    "Output format (strict):",
+    "- Use \"\" (empty string) for any unknown or missing value: dates, times,",
+    "  rooms, emails, offices, grade-scale entries.",
+    "- Use [] for empty arrays. Never output null, and never omit a field — every",
+    "  field in the JSON schema must be present.",
+  ].join("\n");
+}
+
+export const syllabusSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "courseTitle",
+    "courseCode",
+    "term",
+    "institution",
+    "instructors",
+    "teachingAssistants",
+    "officeHours",
+    "grading",
+    "gradeScale",
+    "topics",
+    "policies",
+    "assessments",
+  ],
+  properties: {
+    courseTitle: { type: "string" },
+    courseCode: { type: "string" },
+    term: { type: "string" },
+    institution: { type: "string" },
+    instructors: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "email", "office"],
+        properties: {
+          name: { type: "string" },
+          email: { type: "string" },
+          office: { type: "string" },
+        },
+      },
+    },
+    teachingAssistants: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "email", "office"],
+        properties: {
+          name: { type: "string" },
+          email: { type: "string" },
+          office: { type: "string" },
+        },
+      },
+    },
+    officeHours: { type: "string" },
+    grading: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["category", "weightPct", "notes"],
+        properties: {
+          category: { type: "string" },
+          weightPct: { type: "number" },
+          notes: { type: "string" },
+        },
+      },
+    },
+    gradeScale: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["minPct", "letter"],
+        properties: {
+          minPct: { type: "number" },
+          letter: { type: "string" },
+        },
+      },
+    },
+    topics: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["unit", "items"],
+        properties: {
+          unit: { type: "string" },
+          items: { type: "array", items: { type: "string" } },
+        },
+      },
+    },
+    policies: { type: "array", items: { type: "string" } },
+    assessments: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["kind", "title", "dateStart", "dateEnd", "time", "location"],
+        properties: {
+          kind: {
+            type: "string",
+            enum: ["exam", "quiz", "final", "homework", "break", "other"],
+          },
+          title: { type: "string" },
+          dateStart: { type: "string" },
+          dateEnd: { type: "string" },
+          time: { type: "string" },
+          location: { type: "string" },
+        },
+      },
+    },
+  },
+} as const;

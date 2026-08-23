@@ -31,7 +31,7 @@ const VALID_COLLECTIONS = new Set([
   "quiz", "attempts", "review_logs", "chunks",
   "users", "class_members",
   "user_progress", "activity_events",
-  "chat", "jobs", "reminders",
+  "chat", "jobs", "reminders", "syllabi",
 ]);
 
 /* ---- entity CRUD helpers (Postgres) ----------------------------------- */
@@ -837,7 +837,7 @@ function createApp({ pool, usersByKey, distDir, usersPath }) {
     });
   }
 
-  return app;
+  return { app, userIsMember };
 }
 
 /* ---- startServer ------------------------------------------------------ */
@@ -866,14 +866,14 @@ export async function startServer({
     usersByKey = byKey;
   }
 
-  const app = createApp({ pool, usersByKey, distDir: resolvedDist, usersPath });
+  const { app, userIsMember } = createApp({ pool, usersByKey, distDir: resolvedDist, usersPath });
 
   return new Promise((resolve, reject) => {
     const server = app.listen(port, host, () => {
       const actualPort = server.address().port;
 
       /* Attach WebSocket server for co-study sessions */
-      const wss = createWsServer(server);
+      const wss = createWsServer(server, { isMember: userIsMember });
 
       resolve({
         server,

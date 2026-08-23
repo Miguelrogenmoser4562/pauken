@@ -7,9 +7,11 @@
 */
 
 import type { QuizQuestion } from "../types";
+import { normalizeTopic } from "../topics";
 
 export interface ScopeDiagnostics {
   totalQuestions: number;
+  studiedQuestions: number; // reps >= 1 (reviewed at least once)
   matureQuestions: number; // reps >= 3
   totalLapses: number;
   totalReps: number;
@@ -21,6 +23,7 @@ export interface ScopeDiagnostics {
 export function computeDiagnostics(questions: QuizQuestion[]): ScopeDiagnostics {
   const total = questions.length;
   const mature = questions.filter((q) => q.reps >= 3);
+  const studied = questions.filter((q) => q.reps >= 1);
   const totalLapses = questions.reduce((s, q) => s + q.lapses, 0);
   const totalReps = questions.reduce((s, q) => s + q.reps, 0);
   const lapseRatio = totalReps > 0 ? totalLapses / totalReps : 0;
@@ -31,6 +34,7 @@ export function computeDiagnostics(questions: QuizQuestion[]): ScopeDiagnostics 
 
   return {
     totalQuestions: total,
+    studiedQuestions: studied.length,
     matureQuestions: mature.length,
     totalLapses,
     totalReps,
@@ -44,14 +48,19 @@ export function diagnosticsByTopic(
   questions: QuizQuestion[],
 ): Map<string, ScopeDiagnostics> {
   const byTopic = new Map<string, QuizQuestion[]>();
+  const displayNames = new Map<string, string>();
   for (const q of questions) {
-    const group = byTopic.get(q.topic) ?? [];
+    const key = normalizeTopic(q.topic);
+    if (!displayNames.has(key)) {
+      displayNames.set(key, q.topic);
+    }
+    const group = byTopic.get(key) ?? [];
     group.push(q);
-    byTopic.set(q.topic, group);
+    byTopic.set(key, group);
   }
   const result = new Map<string, ScopeDiagnostics>();
-  for (const [topic, qs] of byTopic) {
-    result.set(topic, computeDiagnostics(qs));
+  for (const [key, qs] of byTopic) {
+    result.set(displayNames.get(key) ?? key, computeDiagnostics(qs));
   }
   return result;
 }

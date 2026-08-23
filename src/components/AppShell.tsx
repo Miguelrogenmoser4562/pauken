@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronsLeft,
   ChevronsRight,
+  CalendarDays,
   FileText,
   Folder,
   FolderPlus,
@@ -21,6 +22,7 @@ import type { ClassEntity, ClassMember, Folder as FolderType, Note } from "../li
 
 const navItems = [
   { to: "/", label: "Dashboard", icon: Home },
+  { to: "/calendar", label: "Calendar", icon: CalendarDays },
   { to: "/practice", label: "Practice", icon: Pencil },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];

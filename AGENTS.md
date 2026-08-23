@@ -69,7 +69,8 @@ src-tauri/            Tauri Rust backend (keychain, yt-dlp)
 
 - **Framework:** Vitest 4 + Testing Library
 - **Test file pattern:** `src/**/*.test.ts` (node env) and `src/**/*.test.tsx` (jsdom env). Tests live next to source.
-- **Config:** `vitest.config.ts` — default `environment: "node"`, then `environmentMatchGlobs` overrides `.test.tsx` to `jsdom`.
+- **Config:** `vitest.config.ts` — default `environment: "node"`. jsdom is selected per-file with the `/* @vitest-environment jsdom */` docblock pragma (the `environmentMatchGlobs` option was removed in Vitest 4).
+- **jsdom + WebSocket:** tests that exercise `StudyWsClient`/co-study flows must replace `globalThis.WebSocket` with the `ws` package client (Node's undici WebSocket is incompatible with jsdom). See `src/pages/sync-join.test.tsx`.
 
 ## FSRS quirks
 

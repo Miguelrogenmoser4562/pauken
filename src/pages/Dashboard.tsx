@@ -6,6 +6,8 @@ import {
   Calendar,
   Check,
   ChevronRight,
+  CircleHelp,
+  Clock,
   FileAudio,
   FileText,
   FolderPlus,
@@ -16,6 +18,7 @@ import {
   Plus,
   Pencil,
   Search,
+  ScrollText,
   Trash2,
   UserMinus,
   UserPlus,
@@ -23,12 +26,15 @@ import {
   X,
 } from "lucide-react";
 import CreateNoteModal, { type CreateNoteResult, type NoteSource } from "../components/CreateNoteModal";
+import SyllabusModal from "../components/SyllabusModal";
+import { deduplicateTopics } from "../lib/topics";
 import { useApp } from "../lib/app";
 import { fetchActivity } from "../lib/api";
 import { exportMarkdown, downloadText } from "../lib/export";
 import { uuid, now } from "../lib/ids";
+import { isUncertain } from "../lib/calendar";
 import { getEnginePrefs } from "../lib/prefs";
-import type { ClassEntity, ClassMember, Folder, Job, Note, PaukenUser, Reminder, SourceKind } from "../lib/types";
+import type { ClassEntity, ClassMember, Folder, Job, Note, PaukenUser, Reminder, SourceKind, Syllabus } from "../lib/types";
 import type { ActivityEvent } from "../lib/types";
 
 function sourceIcon(kind: SourceKind) {
@@ -96,6 +102,11 @@ export default function Dashboard() {
   const [activity, setActivity] = useState<ActivityEvent[]>([]);
   const [activeJobs, setActiveJobs] = useState<Job[]>([]);
   const [showMembers, setShowMembers] = useState(false);
+  const [showSyllabus, setShowSyllabus] = useState(false);
+  const [showAllReminders, setShowAllReminders] = useState(false);
+  const [showAllPolicies, setShowAllPolicies] = useState(false);
+  const [showDeleteClass, setShowDeleteClass] = useState(false);
+  const [syllabus, setSyllabus] = useState<Syllabus | null>(null);
   const [members, setMembers] = useState<ClassMember[]>([]);
   const [serverUsers, setServerUsers] = useState<PaukenUser[]>([]);
   const [selectedAddUser, setSelectedAddUser] = useState("");
@@ -185,9 +196,10 @@ export default function Dashboard() {
   }, [repo, activeClassId, prefs.serverUrl, prefs.userKey, version]);
 
   useEffect(() => {
-    if (!repo || !activeClassId) { setMembers([]); return; }
+    if (!repo || !activeClassId) { setMembers([]); setSyllabus(null); return; }
     repo.membersForClass(activeClassId).then(setMembers).catch(() => {});
     repo.listUsers().then(setServerUsers).catch(() => {});
+    repo.syllabusForClass(activeClassId).then(setSyllabus).catch(() => setSyllabus(null));
   }, [repo, activeClassId, version]);
 
   /* Load pending invitations for the current user */
@@ -379,13 +391,14 @@ export default function Dashboard() {
   }
 
   const inClassView = !!activeClassId;
+  const canDeleteClass = !!activeClass && (!user || activeClass.ownerId === user.id);
   const headerTitle = activeFolder
     ? activeFolder.name
     : activeClass
       ? activeClass.name
       : "Dashboard";
   const headerSub = activeFolder
-    ? `Unit in ${activeClass?.name || "class"}`
+    ? `${activeFolder.name} — ${activeClass?.name || "class"}`
     : activeClass
       ? "Class"
       : "Pauken";
@@ -437,9 +450,90 @@ export default function Dashboard() {
         <>
       {inClassView && (
         <>
+          {syllabus && !activeFolderId && (
+            <div className="mt-6 rounded-card border border-edge bg-card p-5 shadow-soft">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_240px]">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="font-display text-lg font-bold">
+                      {syllabus.courseTitle || activeClass?.name}
+                    </h2>
+                    {syllabus.courseCode && (
+                      <span className="rounded bg-accent-softer px-1.5 py-0.5 text-[10px] font-semibold text-accent">
+                        {syllabus.courseCode}
+                      </span>
+                    )}
+                    {syllabus.term && (
+                      <span className="rounded bg-panel px-1.5 py-0.5 text-[10px] font-semibold text-ink-faint">
+                        {syllabus.term}
+                      </span>
+                    )}
+                    {syllabus.institution && (
+                      <span className="text-xs text-ink-faint">{syllabus.institution}</span>
+                    )}
+                  </div>
+                  {(syllabus.grading.length > 0 || syllabus.officeHours) && (
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      {syllabus.grading.map((g) => (
+                        <span key={g.category} className="rounded-lg bg-panel px-2 py-1 text-xs text-ink-dim">
+                          <span className="font-semibold text-ink">{g.weightPct}%</span> {g.category}
+                        </span>
+                      ))}
+                      {syllabus.officeHours && (
+                        <span className="rounded-lg bg-panel px-2 py-1 text-xs text-ink-dim">
+                          <Clock className="mr-1 inline size-3" />
+                          {syllabus.officeHours}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {syllabus.instructors.length > 0 && (
+                    <div className="mt-2 space-y-0.5 text-xs text-ink-faint">
+                      {syllabus.instructors.slice(0, 2).map((i) => (
+                        <p key={i.name} className="truncate">
+                          {i.name}
+                          {i.email ? ` · ${i.email}` : ""}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                  {syllabus.policies.length > 0 && (
+                    <div className="mt-2 text-xs text-ink-faint">
+                      {showAllPolicies ? (
+                        <ul className="list-inside list-disc space-y-0.5">
+                          {syllabus.policies.map((p) => (
+                            <li key={p} className="truncate">{p}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="truncate">{syllabus.policies.slice(0, 2).join(" · ")}</p>
+                      )}
+                      <button
+                        onClick={() => setShowAllPolicies((v) => !v)}
+                        className="mt-1 font-semibold text-accent hover:underline"
+                      >
+                        {showAllPolicies
+                          ? "Hide policies"
+                          : `Show all policies (${syllabus.policies.length})`}
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <UpcomingEvents events={syllabus.events} />
+              </div>
+            </div>
+          )}
+
           <div className="mt-6 flex items-center justify-between">
             <h2 className="text-lg font-bold">Units</h2>
             <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowSyllabus(true)}
+                className="flex items-center gap-1.5 rounded-lg border border-edge bg-card px-4 py-2 text-sm font-semibold shadow-soft transition hover:bg-card-hover active:scale-[0.98]"
+              >
+                <ScrollText className="size-4" />
+                Syllabus
+              </button>
               <button
                 onClick={() => setShowMembers(true)}
                 className="flex items-center gap-1.5 rounded-lg border border-edge bg-card px-4 py-2 text-sm font-semibold shadow-soft transition hover:bg-card-hover active:scale-[0.98]"
@@ -454,6 +548,15 @@ export default function Dashboard() {
                 {activeFolderId ? <BookOpen className="size-4" /> : <Plus className="size-4" />}
                 {activeFolderId ? "Add Knowledge" : "New Unit"}
               </button>
+              {canDeleteClass && (
+                <button
+                  onClick={() => setShowDeleteClass(true)}
+                  className="flex items-center gap-1.5 rounded-lg border border-danger-ink/30 bg-card px-4 py-2 text-sm font-semibold text-danger-ink shadow-soft transition hover:bg-danger-soft"
+                >
+                  <Trash2 className="size-4" />
+                  Delete Class
+                </button>
+              )}
             </div>
           </div>
 
@@ -845,56 +948,80 @@ export default function Dashboard() {
             )}
 
             <div className="mt-3 space-y-2">
-              {reminders.filter((r) => !r.completed).map((r) => (
-                <div
-                  key={r.id}
-                  className="flex items-start gap-3 rounded-card border border-edge bg-card p-3 shadow-soft"
-                >
-                  <button
-                    onClick={() => toggleReminder(r)}
-                    className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border ${
-                      r.completed ? "border-accent bg-accent" : "border-edge"
-                    }`}
+              {(() => {
+                const incomplete = reminders
+                  .filter((r) => !r.completed)
+                  .sort((a, b) => (a.dueDate ?? Infinity) - (b.dueDate ?? Infinity));
+                const visible = showAllReminders ? incomplete : incomplete.slice(0, 5);
+                if (visible.length === 0 && !showReminderForm) {
+                  return <p className="text-sm text-ink-faint">No reminders</p>;
+                }
+                return visible.map((r) => (
+                  <div
+                    key={r.id}
+                    className="flex items-start gap-3 rounded-card border border-edge bg-card p-3 shadow-soft"
                   >
-                    {r.completed && <Check className="size-3 text-white" />}
-                  </button>
-                  <div className="min-w-0 flex-1">
-                    <p className={`truncate text-sm font-semibold ${r.completed ? "text-ink-faint line-through" : "text-ink"}`}>
-                      {r.title}
-                    </p>
-                    {r.text && (
-                      <p className={`mt-0.5 truncate text-xs ${r.completed ? "text-ink-faint" : "text-ink-dim"}`}>
-                        {r.text}
-                      </p>
+                    <button
+                      onClick={() => toggleReminder(r)}
+                      className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border ${
+                        r.completed ? "border-accent bg-accent" : "border-edge"
+                      }`}
+                    >
+                      {r.completed && <Check className="size-3 text-white" />}
+                    </button>
+                    {isUncertain(r.dueDate, r.dateEnd) && (
+                      <CircleHelp
+                        className="mt-0.5 size-4 shrink-0 text-callout-ink"
+                        aria-label="Due date is only the start of a range"
+                      />
                     )}
-                    <div className="mt-1 flex items-center gap-2">
-                      {r.dueDate && (
-                        <span className="inline-flex items-center gap-1 rounded bg-panel px-1.5 py-0.5 text-[10px] font-semibold text-ink-faint">
-                          <Calendar className="size-3" />
-                          {formatDate(r.dueDate)}
-                        </span>
+                    <div className="min-w-0 flex-1">
+                      <p className={`truncate text-sm font-semibold ${r.completed ? "text-ink-faint line-through" : "text-ink"}`}>
+                        {r.title}
+                      </p>
+                      {r.text && (
+                        <p className={`mt-0.5 truncate text-xs ${r.completed ? "text-ink-faint" : "text-ink-dim"}`}>
+                          {r.text}
+                        </p>
                       )}
-                      {r.classId && (() => {
-                        const cl = classes.find((c) => c.id === r.classId);
-                        return cl ? (
-                          <span className="rounded bg-accent-softer px-1.5 py-0.5 text-[10px] font-semibold text-accent">
-                            {cl.name}
+                      <div className="mt-1 flex items-center gap-2">
+                        {r.dueDate && (
+                          <span className="inline-flex items-center gap-1 rounded bg-panel px-1.5 py-0.5 text-[10px] font-semibold text-ink-faint">
+                            <Calendar className="size-3" />
+                            {formatDate(r.dueDate)}
+                            {isUncertain(r.dueDate, r.dateEnd) &&
+                              r.dateEnd && ` – ${formatDate(r.dateEnd)}`}
                           </span>
-                        ) : null;
-                      })()}
+                        )}
+                        {r.classId && (() => {
+                          const cl = classes.find((c) => c.id === r.classId);
+                          return cl ? (
+                            <span className="rounded bg-accent-softer px-1.5 py-0.5 text-[10px] font-semibold text-accent">
+                              {cl.name}
+                            </span>
+                          ) : null;
+                        })()}
+                      </div>
                     </div>
+                    <button
+                      onClick={() => deleteReminder(r.id)}
+                      className="shrink-0 rounded p-1 text-ink-faint hover:text-danger-ink"
+                      aria-label="Delete reminder"
+                    >
+                      <Trash2 className="size-3.5" />
+                    </button>
                   </div>
-                  <button
-                    onClick={() => deleteReminder(r.id)}
-                    className="shrink-0 rounded p-1 text-ink-faint hover:text-danger-ink"
-                    aria-label="Delete reminder"
-                  >
-                    <Trash2 className="size-3.5" />
-                  </button>
-                </div>
-              ))}
-              {reminders.filter((r) => !r.completed).length === 0 && !showReminderForm && (
-                <p className="text-sm text-ink-faint">No reminders</p>
+                ));
+              })()}
+              {reminders.filter((r) => !r.completed).length > 5 && (
+                <button
+                  onClick={() => setShowAllReminders((v) => !v)}
+                  className="w-full rounded-lg border border-edge bg-card px-3 py-1.5 text-xs font-semibold text-ink-dim shadow-soft transition hover:bg-card-hover"
+                >
+                  {showAllReminders
+                    ? "Show less"
+                    : `Show more (${reminders.filter((r) => !r.completed).length - 5})`}
+                </button>
               )}
             </div>
           </div>
@@ -945,9 +1072,21 @@ export default function Dashboard() {
           classId={activeClassId || undefined}
           existingTopics={unitFolders.length > 0 && activeFolderId ? (() => {
             const unitNotes = notes.filter((n) => n.folderId === activeFolderId);
-            return [...new Set(unitNotes.map((n) => n.topic).filter(Boolean))] as string[];
+            return deduplicateTopics(unitNotes.map((n) => n.topic).filter(Boolean) as string[]);
           })() : undefined}
           onNewUnit={() => { setModal(null); createUnit(); }}
+        />
+      )}
+
+      {showSyllabus && activeClass && (
+        <SyllabusModal
+          classId={activeClass.id}
+          className={activeClass.name}
+          onClose={() => setShowSyllabus(false)}
+          onApplied={() => {
+            setShowSyllabus(false);
+            bump();
+          }}
         />
       )}
 
@@ -1055,6 +1194,45 @@ export default function Dashboard() {
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {showDeleteClass && activeClass && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 transition-opacity"
+          onClick={() => setShowDeleteClass(false)}
+        >
+          <div
+            className="w-[400px] max-w-[92vw] rounded-modal bg-card p-6 shadow-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="font-display text-xl font-bold text-ink">Delete class?</h2>
+            <p className="mt-2 text-sm text-ink-dim">
+              This permanently deletes <strong>{activeClass.name}</strong> and everything in it —
+              notes, practice problems, syllabus, and reminders. This cannot be undone.
+            </p>
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                onClick={() => setShowDeleteClass(false)}
+                className="rounded-lg border border-edge px-4 py-2 text-sm font-semibold text-ink-dim hover:bg-card-hover"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  if (!repo || !activeClass) return;
+                  await repo.deleteClass(activeClass.id);
+                  setShowDeleteClass(false);
+                  bump();
+                  navigate("/");
+                }}
+                className="flex items-center gap-1.5 rounded-lg bg-danger-ink px-4 py-2 text-sm font-bold text-white hover:opacity-90"
+              >
+                <Trash2 className="size-4" />
+                Delete class
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1202,6 +1380,46 @@ function Empty({ title, sub }: { title: string; sub: string }) {
     <div className="mt-10 flex flex-col items-center gap-1 py-16 text-center">
       <p className="font-display text-lg font-semibold text-ink-dim">{title}</p>
       <p className="text-sm text-ink-faint">{sub}</p>
+    </div>
+  );
+}
+
+/* Next few dated assessments from the syllabus, newest first list. */
+function UpcomingEvents({ events }: { events: Syllabus["events"] }) {
+  const upcoming = events
+    .filter(
+      (e): e is Syllabus["events"][number] & { dateStart: number } =>
+        e.dateStart !== undefined && e.dateStart >= Date.now() - 86400000,
+    )
+    .sort((a, b) => a.dateStart - b.dateStart)
+    .slice(0, 3);
+
+  if (upcoming.length === 0) return null;
+
+  return (
+    <div className="w-full space-y-1.5 rounded-xl bg-panel p-3 lg:max-w-none">
+      <p className="text-[10px] font-bold uppercase tracking-wide text-ink-faint">
+        Upcoming
+      </p>
+      {upcoming.map((e) => (
+        <div
+          key={e.id}
+          className="flex items-center gap-2 rounded-lg bg-card px-3 py-1.5 text-xs shadow-soft"
+        >
+          <Calendar className="size-3.5 shrink-0 text-accent" />
+          {isUncertain(e.dateStart, e.dateEnd) && (
+            <CircleHelp className="size-3.5 shrink-0 text-callout-ink" />
+          )}
+          <span className="truncate font-semibold text-ink-dim">{e.title}</span>
+          <span className="ml-auto shrink-0 tabular-nums text-ink-faint">
+            {formatDate(e.dateStart)}
+            {isUncertain(e.dateStart, e.dateEnd) && e.dateEnd
+              ? ` – ${formatDate(e.dateEnd)}`
+              : ""}
+            {e.time ? ` · ${e.time}` : ""}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }

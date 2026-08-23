@@ -2,6 +2,7 @@ import { useState } from "react";
 import { FileAudio, FileText, Link2, Upload, X } from "lucide-react";
 import type { IngestInput } from "../lib/ingest";
 import type { ContentScope, SourceKind } from "../lib/types";
+import { normalizeTopic } from "../lib/topics";
 
 export type NoteSource = "link" | "document" | "audio";
 
@@ -64,7 +65,7 @@ export default function CreateNoteModal({
       const trimmed = topicInput.trim();
       if (trimmed) {
         topic = trimmed;
-        contentScope = existingTopics?.includes(trimmed) ? "additional" : "new_topic";
+        contentScope = existingTopics?.some((t) => normalizeTopic(t) === normalizeTopic(trimmed)) ? "additional" : "new_topic";
       }
     }
 

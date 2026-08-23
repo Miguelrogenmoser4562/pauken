@@ -1,6 +1,7 @@
 /* Storage abstraction. The app uses the IndexedDB implementation; tests use the
    in-memory one. A future Rust/SQLite backend implements the same Store. */
 
+import { deduplicateTopics, normalizeTopic } from "../topics";
 import type {
   ActivityEvent,
   ChatTurn,
@@ -17,6 +18,7 @@ import type {
   Reminder,
   ReviewLog,
   SourceChunk,
+  Syllabus,
   UserProgress,
 } from "../types";
 
@@ -47,6 +49,7 @@ export const COLLECTIONS = {
   chat: "chat",
   jobs: "jobs",
   reminders: "reminders",
+  syllabi: "syllabi",
 } as const;
 
 /* High-level repository over a Store. This is what generation code and the UI
@@ -81,10 +84,33 @@ export class Repo {
   getClass = (id: string) => this.store.get<ClassEntity>(COLLECTIONS.classes, id);
   putClass = (c: ClassEntity) => this.store.put(COLLECTIONS.classes, c);
   deleteClass = async (id: string) => {
-    const folders = await this.store.where<Folder>(COLLECTIONS.folders, { classId: id } as Partial<Folder>);
-    for (const f of folders) {
-      await this.deleteFolder(f.id);
+    const notes = await this.notesForClass(id);
+    for (const n of notes) {
+      const questions = await this.questionsFor(n.id);
+      for (const q of questions) {
+        const [logs, progress] = await Promise.all([
+          this.reviewLogsForQuestion(q.id),
+          this.progressForQuestion(q.id),
+        ]);
+        await Promise.all([
+          ...logs.map((l) => this.store.delete(COLLECTIONS.reviewLogs, l.id)),
+          ...progress.map((p) => this.store.delete(COLLECTIONS.userProgress, p.id)),
+        ]);
+      }
+      await this.deleteNote(n.id);
+      const chunks = await this.chunksForNote(n.id);
+      await Promise.all(chunks.map((c) => this.store.delete(COLLECTIONS.chunks, c.id)));
     }
+    const folders = await this.foldersForClass(id);
+    await Promise.all(folders.map((f) => this.store.delete(COLLECTIONS.folders, f.id)));
+    const syllabi = await this.store.where<Syllabus>(COLLECTIONS.syllabi, { classId: id } as Partial<Syllabus>);
+    await Promise.all(syllabi.map((s) => this.store.delete(COLLECTIONS.syllabi, s.id)));
+    const reminders = await this.remindersForClass(id);
+    await Promise.all(reminders.map((r) => this.store.delete(COLLECTIONS.reminders, r.id)));
+    const members = await this.membersForClass(id);
+    await Promise.all(members.map((m) => this.store.delete(COLLECTIONS.classMembers, m.id)));
+    const activity = await this.store.where<ActivityEvent>(COLLECTIONS.activityEvents, { classId: id } as Partial<ActivityEvent>);
+    await Promise.all(activity.map((a) => this.store.delete(COLLECTIONS.activityEvents, a.id)));
     await this.store.delete(COLLECTIONS.classes, id);
   };
 
@@ -181,15 +207,12 @@ export class Repo {
   };
   questionsForClassAndTopic = async (classId: string, topic: string) => {
     const classQs = await this.questionsForClass(classId);
-    return classQs.filter((q) => q.topic === topic);
+    const key = normalizeTopic(topic);
+    return classQs.filter((q) => q.topic && normalizeTopic(q.topic) === key);
   };
   topicsInUnit = async (folderId: string) => {
     const notes = await this.notesForFolder(folderId);
-    const topicSet = new Set<string>();
-    for (const n of notes) {
-      if (n.topic) topicSet.add(n.topic);
-    }
-    return [...topicSet].sort();
+    return deduplicateTopics(notes.map((n) => n.topic).filter(Boolean) as string[]);
   };
   notesForClass = async (classId: string) => {
     const folders = await this.foldersForClass(classId);
@@ -243,4 +266,13 @@ export class Repo {
   deleteReminder = (id: string) => this.store.delete(COLLECTIONS.reminders, id);
   remindersForClass = (classId: string) =>
     this.store.where<Reminder>(COLLECTIONS.reminders, { classId } as Partial<Reminder>);
+
+  // syllabi
+  listSyllabi = () => this.store.all<Syllabus>(COLLECTIONS.syllabi);
+  putSyllabus = (s: Syllabus) => this.store.put(COLLECTIONS.syllabi, s);
+  getSyllabus = (id: string) => this.store.get<Syllabus>(COLLECTIONS.syllabi, id);
+  syllabusForClass = (classId: string) =>
+    this.store.where<Syllabus>(COLLECTIONS.syllabi, { classId } as Partial<Syllabus>)
+      .then((rows) => rows[0]);
+  deleteSyllabus = (id: string) => this.store.delete(COLLECTIONS.syllabi, id);
 }

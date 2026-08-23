@@ -7,6 +7,7 @@ import Settings from "./pages/Settings";
 import NoteView from "./pages/NoteView";
 import Onboarding from "./pages/Onboarding";
 import Practice from "./pages/Practice";
+import CalendarPage from "./pages/Calendar";
 import { useApp } from "./lib/app";
 
 export default function App() {
@@ -34,6 +35,7 @@ export default function App() {
         <Route path="/settings" element={<Settings />} />
         <Route path="/generation" element={<GenerationProgress />} />
         <Route path="/practice" element={<Practice />} />
+        <Route path="/calendar" element={<CalendarPage />} />
       </Route>
       <Route path="/notes/:id" element={<Navigate to="editor" replace />} />
       <Route path="/notes/:id/:view" element={<NoteView />} />

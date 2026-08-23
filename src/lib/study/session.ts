@@ -37,7 +37,7 @@ function weeklyReviewCount(
    keep their default FSRS state from generation. */
 export function mergeUserProgress(
   questions: QuizQuestion[],
-  progress: UserProgress[],
+  progress: UserProgress[] = [],
 ): QuizQuestion[] {
   const progMap = new Map(progress.map((p) => [p.questionId, p]));
   return questions.map((q) => {
@@ -63,6 +63,7 @@ export function buildSession(
   nowMs: number = Date.now(),
   _examDate?: number,
   reviewLogs: ReviewLog[] = [],
+  newItemsCap?: number,
 ): Session {
   const due = dueQuestions(allQuestions, nowMs);
 
@@ -75,7 +76,7 @@ export function buildSession(
 
   /* Backlog: pull NEW questions up to the session cap. */
   const backlog = backlogQuestions(allQuestions);
-  const newItems = backlog.slice(0, defaults.maxNewCardsPerSession);
+  const newItems = backlog.slice(0, newItemsCap ?? defaults.maxNewCardsPerSession);
 
   /* Early-review fallback: if nothing is due, pull near-due REVIEW questions. */
   let earlyReview: QuizQuestion[] = [];
@@ -105,11 +106,12 @@ export function buildSession(
 export function buildCoStudySession(
   allQuestions: QuizQuestion[],
   defaults: StudyDefaults,
-  userProgress: UserProgress[],
-  partnerProgress: UserProgress[],
-  userReviewLogs: ReviewLog[],
-  partnerReviewLogs: ReviewLog[],
+  userProgress: UserProgress[] = [],
+  partnerProgress: UserProgress[] = [],
+  userReviewLogs: ReviewLog[] = [],
+  partnerReviewLogs: ReviewLog[] = [],
   nowMs: number = Date.now(),
+  newItemsCap?: number,
 ): Session {
   const userMerged = mergeUserProgress(allQuestions, userProgress);
   const partnerMerged = mergeUserProgress(allQuestions, partnerProgress);
@@ -146,7 +148,7 @@ export function buildCoStudySession(
   });
 
   const backlog = backlogQuestions(allQuestions);
-  const newItems = backlog.slice(0, defaults.maxNewCardsPerSession);
+  const newItems = backlog.slice(0, newItemsCap ?? defaults.maxNewCardsPerSession);
 
   let earlyReview: QuizQuestion[] = [];
   if (cappedDue.length === 0 && newItems.length === 0) {

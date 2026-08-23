@@ -79,7 +79,7 @@ export class CachingStore implements Store {
       "notes", "folders", "classes", "flashcards",
       "quiz", "attempts", "review_logs", "chunks",
       "users", "class_members", "user_progress",
-      "activity_events", "chat", "jobs", "reminders",
+      "activity_events", "chat", "jobs", "reminders", "syllabi",
     ];
     for (const col of collections) {
       await this.local.clear(col).catch(() => {});
@@ -92,7 +92,7 @@ export class CachingStore implements Store {
       "notes", "folders", "classes", "flashcards",
       "quiz", "attempts", "review_logs", "chunks",
       "users", "class_members", "user_progress",
-      "activity_events", "chat", "jobs", "reminders",
+      "activity_events", "chat", "jobs", "reminders", "syllabi",
     ];
     for (const col of collections) {
       try {

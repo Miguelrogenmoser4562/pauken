@@ -1,6 +1,7 @@
 /* Quiz-mastery roll-up: pure aggregation over questions + attempts, no I/O. */
 
 import type { QuizAttempt, QuizQuestion } from "../types";
+import { normalizeTopic } from "../topics";
 
 export interface TopicMastery {
   topic: string;
@@ -19,14 +20,21 @@ export function masteryByTopic(
   questions: QuizQuestion[],
   attempts: QuizAttempt[],
 ): TopicMastery[] {
-  const topics = Array.from(new Set(questions.map((q) => q.topic)));
+  const topicMap = new Map<string, string>();
+  for (const q of questions) {
+    if (!q.topic) continue;
+    const key = normalizeTopic(q.topic);
+    if (!topicMap.has(key)) {
+      topicMap.set(key, q.topic);
+    }
+  }
 
-  const rows = topics.map((topic): TopicMastery => {
-    const topicAttempts = attempts.filter((a) => a.topic === topic);
+  const rows = [...topicMap.entries()].map(([key, displayTopic]): TopicMastery => {
+    const topicAttempts = attempts.filter((a) => a.topic && normalizeTopic(a.topic) === key);
     const total = topicAttempts.length;
     const correct = topicAttempts.filter((a) => a.correct).length;
     const pct = total ? Math.round((correct / total) * 100) : 0;
-    return { topic, correct, total, pct };
+    return { topic: displayTopic, correct, total, pct };
   });
 
   rows.sort((a, b) => a.topic.localeCompare(b.topic));

@@ -9,10 +9,18 @@ import {
   studyOrderQuestions,
 } from "./fsrs";
 import { masteryByTopic, masteryColor } from "./mastery";
+import { buildCoStudySession, mergeUserProgress } from "./session";
+import type { StudyDefaults } from "../types";
 
 const NOW = 1_700_000_000_000;
 const DAY = 86_400_000;
 const FAR_FUTURE = 4_100_000_000_000;
+
+const DEFAULTS: StudyDefaults = {
+  retentionTarget: 0.9,
+  maxReviewsPerItemPerWeek: 3,
+  maxNewCardsPerSession: 5,
+};
 
 function makeQuestion(overrides: Partial<QuizQuestion> = {}): QuizQuestion {
   return {
@@ -241,5 +249,31 @@ describe("masteryColor", () => {
   it("is green at 80 and above", () => {
     expect(masteryColor(80)).toBe("green");
     expect(masteryColor(100)).toBe("green");
+  });
+});
+
+describe("buildCoStudySession defensive guards", () => {
+  it("treats undefined progress/review logs as empty (old-server payloads)", () => {
+    const questions = [
+      makeQuestion({ id: "q-1", state: "review", due: NOW - DAY }),
+      makeQuestion({ id: "q-2" }),
+    ];
+    const empty = buildCoStudySession(questions, DEFAULTS, [], [], [], []);
+    const undefinedArgs = buildCoStudySession(
+      questions,
+      DEFAULTS,
+      undefined as never,
+      undefined as never,
+      undefined as never,
+      undefined as never,
+    );
+    expect(() => buildCoStudySession(questions, DEFAULTS, undefined as never)).not.toThrow();
+    expect(undefinedArgs.total).toBe(empty.total);
+    expect(undefinedArgs.due.map((q) => q.id)).toEqual(empty.due.map((q) => q.id));
+  });
+
+  it("mergeUserProgress ignores undefined progress", () => {
+    const questions = [makeQuestion({ id: "q-1" })];
+    expect(mergeUserProgress(questions, undefined as never)).toEqual(questions);
   });
 });

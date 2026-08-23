@@ -22,6 +22,7 @@ import {
   titleSystem,
   titleUser,
 } from "../prompts";
+import { deduplicateTopics, normalizeTopic } from "../topics";
 import { retrieveRelevantChunks, chunksToContext } from "./rag";
 
 /* Token budgets. Sized so a single request stays well under a low 30k-TPM
@@ -201,11 +202,11 @@ async function generatePerConcept(
   chunks: SourceChunk[],
   existingQuestions?: QuizQuestion[],
 ): Promise<GeneratedItem[]> {
-  const existingTopics = new Set(existingQuestions?.map((q) => q.topic) ?? []);
+  const existingTopics = new Set(existingQuestions?.map((q) => normalizeTopic(q.topic)) ?? []);
   const items: GeneratedItem[] = [];
 
   for (const concept of concepts) {
-    if (existingTopics.has(concept.title)) continue;
+    if (existingTopics.has(normalizeTopic(concept.title))) continue;
 
     let context = noteContent;
     try {
@@ -285,7 +286,7 @@ export async function generatePracticeItems(
   const nowMs = now();
 
   const existingTopicNames = existingQuestions
-    ? [...new Set(existingQuestions.map((q) => q.topic))]
+    ? deduplicateTopics(existingQuestions.map((q) => q.topic))
     : undefined;
   const concepts = await extractConcepts(engine, content, existingTopicNames);
   const items = await generatePerConcept(engine, concepts, content, chunks ?? [], existingQuestions);
