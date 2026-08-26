@@ -869,8 +869,15 @@ export async function startServer({
   const { app, userIsMember } = createApp({ pool, usersByKey, distDir: resolvedDist, usersPath });
 
   return new Promise((resolve, reject) => {
-    const server = app.listen(port, host, () => {
-      const actualPort = server.address().port;
+    /* Use raw http.createServer + explicit 'error'/'listening' handlers rather
+       than express's app.listen, whose callback is registered as BOTH the
+       'listening' AND the 'error' handler. On a bind error (e.g. EADDRINUSE)
+       express would invoke our callback, and server.address() returns null
+       then — crashing the process instead of rejecting the promise. */
+    const server = http.createServer(app);
+    server.once("error", reject);
+    server.listen(port, host, () => {
+      const actualPort = server.address()?.port;
 
       /* Attach WebSocket server for co-study sessions */
       const wss = createWsServer(server, { isMember: userIsMember });
@@ -882,6 +889,5 @@ export async function startServer({
         wss,
       });
     });
-    server.once("error", reject);
   });
 }
