@@ -11,6 +11,7 @@ import { uuid, now } from "../ids";
 import { ingest, type IngestInput } from "../ingest";
 import { generateNoteBody, generatePracticeItems, generateSummary, generateTitle } from "./index";
 import { chunkAndEmbed } from "./rag";
+import { ocrSystem } from "../prompts";
 
 /* Self-hosted Whisper API endpoint (OpenAI-compatible). Configure via env var
    or update this default when setting up your server in Phase A. */
@@ -45,6 +46,10 @@ export interface CreateNoteOptions {
   repo: Repo;
   engine: Engine;
   inputs: IngestInput[];
+  /* Optional vision-capable engine used only to OCR image-only (scanned)
+     PDFs. Falls back to `engine` when omitted. Generation always uses
+     `engine` (DeepSeek). */
+  ocrEngine?: Engine;
   language?: string;
   /* Class/unit context for organization. */
   classId?: string;
@@ -122,6 +127,47 @@ export async function createNoteFromSources(
         file.status = "running";
         await emit({ stage: "transcribe", message: `Transcribing ${file.name}…` });
         text = await transcribeAudio(res.audio, opts.signal);
+      } else if (res.needsOcr && (res.fileDataUrl || (res.pageImages && res.pageImages.length > 0))) {
+        const ocrEngine = opts.ocrEngine ?? engine;
+        if (!ocrEngine.capabilities().vision) {
+          throw new Error(
+            "This PDF is a scan or image with no selectable text. " +
+              "Paste the text instead — no OCR engine is configured.",
+          );
+        }
+        file.status = "running";
+        let ocrText: string;
+        if (res.fileDataUrl) {
+          /* Send the original file to the vision engine so it can read native
+             text / do OCR in one shot (cheaper + more accurate than per-page
+             re-rendered images). */
+          await emit({
+            stage: "ocr",
+            message: `Reading ${file.name}…`,
+            progress: (i + 0.5) / (inputs.length + 1),
+          });
+          ocrText = await ocrEngine.ocrImage(res.fileDataUrl, {
+            system: ocrSystem,
+            signal: opts.signal,
+            filename: file.name,
+          });
+        } else {
+          /* Fallback: OCR each rendered page image individually. */
+          const pagesImages = res.pageImages ?? [];
+          const pages: string[] = [];
+          for (let p = 0; p < pagesImages.length; p++) {
+            await emit({
+              stage: "ocr",
+              message: `Reading page ${p + 1} of ${pagesImages.length}…`,
+              progress: (i + (p + 1) / pagesImages.length) / (inputs.length + 1),
+            });
+            pages.push(
+              await ocrEngine.ocrImage(pagesImages[p], { system: ocrSystem, signal: opts.signal }),
+            );
+          }
+          ocrText = pages.join("\n\n");
+        }
+        text = ocrText;
       }
       if (!text.trim() && inputs[i].kind !== "blank") {
         throw new Error("No readable content found.");

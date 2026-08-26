@@ -98,6 +98,80 @@ describe("OpenAIEngine", () => {
     });
   });
 
+  it("ocrImage() sends a vision message and returns the transcribed text", async () => {
+    const fetchMock = mockFetch(async () =>
+      jsonResponse({ choices: [{ message: { content: "  $x^2 + y^2 = z^2$  " } }] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const engine = new OpenAIEngine("sk-test");
+    const text = await engine.ocrImage("data:image/png;base64,AAAA", {
+      system: "Transcribe this math.",
+    });
+
+    expect(text).toBe("$x^2 + y^2 = z^2$");
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://api.openai.com/v1/chat/completions");
+    const body = JSON.parse(init?.body as string);
+    expect(body.model).toBe("gpt-4o-mini");
+    expect(body.stream).toBe(false);
+    expect(body.messages[0].content).toEqual([
+      { type: "text", text: "Transcribe this math." },
+      { type: "image_url", image_url: { url: "data:image/png;base64,AAAA", detail: "high" } },
+    ]);
+  });
+
+  it("ocrImage() honors a model override via opts", async () => {
+    const fetchMock = mockFetch(async () =>
+      jsonResponse({ choices: [{ message: { content: "text" } }] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const engine = new OpenAIEngine("sk-test");
+    await engine.ocrImage("data:image/png;base64,AAAA", { model: "gpt-4o" });
+    expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string).model).toBe("gpt-4o");
+  });
+
+  it("ocrImage() throws on empty content instead of returning it", async () => {
+    const fetchMock = mockFetch(async () =>
+      jsonResponse({ choices: [{ message: { content: "   " } }] }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      new OpenAIEngine("sk-test").ocrImage("data:image/png;base64,AAAA"),
+    ).rejects.toThrow(/empty OCR content/i);
+  });
+
+  it("ocrImage() throws when the model refuses to transcribe the image", async () => {
+    const fetchMock = mockFetch(async () =>
+      jsonResponse({
+        choices: [
+          {
+            message: {
+              content:
+                "I'm unable to transcribe the content of that image. If you can " +
+                "provide the text or describe the content, I'd be happy to help!",
+            },
+          },
+        ],
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      new OpenAIEngine("sk-test").ocrImage("data:image/png;base64,AAAA"),
+    ).rejects.toThrow(/couldn't read this page|too low-resolution/i);
+  });
+
+  it("capabilities() advertises vision", () => {
+    expect(new OpenAIEngine("sk-test").capabilities()).toEqual({
+      chat: true,
+      embeddings: true,
+      vision: true,
+    });
+  });
+
   it("maps a 401 response to an auth EngineError", async () => {
     vi.stubGlobal(
       "fetch",
@@ -199,6 +273,7 @@ describe("AnthropicEngine", () => {
     expect(engine.capabilities()).toEqual({
       chat: true,
       embeddings: false,
+      vision: false,
     });
   });
 
@@ -210,6 +285,14 @@ describe("AnthropicEngine", () => {
 });
 
 describe("DeepSeekEngine", () => {
+  it("ocrImage() throws unsupported (no vision)", async () => {
+    const engine = new DeepSeekEngine("sk-test");
+    await expect(engine.ocrImage("data:image/png;base64,AAAA")).rejects.toMatchObject({
+      name: "EngineError",
+      kind: "unsupported",
+    });
+  });
+
   it("complete() streams tokens and returns concatenated text", async () => {
     const chunks = [
       `data: ${JSON.stringify({ choices: [{ delta: { content: "Hello" } }] })}\n\n`,
@@ -239,7 +322,9 @@ describe("DeepSeekEngine", () => {
   });
 
   it("complete() uses the strong-tier model with thinking enabled", async () => {
-    const fetchMock = mockFetch(async () => streamResponse(["data: [DONE]\n\n"]));
+    const fetchMock = mockFetch(async () =>
+      streamResponse([`data: ${JSON.stringify({ choices: [{ delta: { content: "ok" } }] })}\n\n`, "data: [DONE]\n\n"]),
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     const engine = new DeepSeekEngine("sk-test");
@@ -251,7 +336,9 @@ describe("DeepSeekEngine", () => {
   });
 
   it("complete() uses the constructor model override", async () => {
-    const fetchMock = mockFetch(async () => streamResponse(["data: [DONE]\n\n"]));
+    const fetchMock = mockFetch(async () =>
+      streamResponse([`data: ${JSON.stringify({ choices: [{ delta: { content: "ok" } }] })}\n\n`, "data: [DONE]\n\n"]),
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     const engine = new DeepSeekEngine("sk-test", "deepseek-v4-pro");
@@ -278,6 +365,57 @@ describe("DeepSeekEngine", () => {
 
     expect(text).toBe("Answer");
     expect(tokens).toEqual(["Answer"]);
+  });
+
+  it("complete() retries with thinking disabled when the model returns only reasoning", async () => {
+    let calls = 0;
+    const fetchMock = mockFetch(async () => {
+      calls += 1;
+      if (calls === 1) {
+        return streamResponse([
+          `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "thinking..." } }] })}\n\n`,
+          `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "length" }] })}\n\n`,
+          `data: [DONE]\n\n`,
+        ]);
+      }
+      return streamResponse([
+        `data: ${JSON.stringify({ choices: [{ delta: { content: "Final answer" } }] })}\n\n`,
+        `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\n\n`,
+        `data: [DONE]\n\n`,
+      ]);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const engine = new DeepSeekEngine("sk-test");
+    const text = await engine.complete({
+      messages: [{ role: "user", content: "hi" }],
+      tier: "strong",
+    });
+
+    expect(text).toBe("Final answer");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const first = JSON.parse(fetchMock.mock.calls[0][1]?.body as string);
+    const second = JSON.parse(fetchMock.mock.calls[1][1]?.body as string);
+    expect(first.thinking).toEqual({ type: "enabled" });
+    expect(second.thinking).toEqual({ type: "disabled" });
+    expect(second.reasoning_effort).toBeUndefined();
+  });
+
+  it("complete() throws the no-content error when both attempts come back empty", async () => {
+    const fetchMock = mockFetch(async () =>
+      streamResponse([
+        `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: "thinking..." } }] })}\n\n`,
+        `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\n\n`,
+        `data: [DONE]\n\n`,
+      ]),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const engine = new DeepSeekEngine("sk-test");
+    await expect(
+      engine.complete({ messages: [{ role: "user", content: "hi" }], tier: "strong" }),
+    ).rejects.toThrow(/carried no usable text/);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("structured() sends a forced tool call on the beta endpoint", async () => {
@@ -314,6 +452,7 @@ describe("DeepSeekEngine", () => {
     expect(engine.capabilities()).toEqual({
       chat: true,
       embeddings: false,
+      vision: false,
     });
   });
 

@@ -27,7 +27,7 @@ class FakeEngine implements Engine {
   calls: string[] = [];
   completeCalls = 0;
   capabilities(): EngineCapabilities {
-    return { chat: true, embeddings: true };
+    return { chat: true, embeddings: true, vision: false };
   }
   async complete(opts: CompletionOptions, onToken?: TokenHandler): Promise<string> {
     this.completeCalls++;
@@ -38,6 +38,9 @@ class FakeEngine implements Engine {
     const md = "# Overview\n\nPlants make food.\n\n## Key Takeaways\n\n- Light matters";
     for (const ch of md) onToken?.(ch);
     return md;
+  }
+  async ocrImage(_imageDataUrl: string): Promise<string> {
+    return "";
   }
   async structured<T>(opts: StructuredOptions<T>): Promise<T> {
     this.calls.push(opts.schemaName);

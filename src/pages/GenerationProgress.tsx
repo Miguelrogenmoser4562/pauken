@@ -20,6 +20,7 @@ interface LocationState {
 const STAGES: { key: JobStage; label: string }[] = [
   { key: "ingest", label: "Ingest" },
   { key: "transcribe", label: "Transcribe" },
+  { key: "ocr", label: "OCR" },
   { key: "notes", label: "Notes" },
   { key: "title", label: "Title" },
   { key: "flashcards", label: "Flashcards" },
@@ -33,7 +34,7 @@ function stageOrder(s: JobStage): number {
 export default function GenerationProgress() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { repo, engine, bump } = useApp();
+  const { repo, engine, visionEngine, bump } = useApp();
 
   const [job, setJob] = useState<Job | null>(null);
   const [done, setDone] = useState(false);
@@ -67,7 +68,7 @@ export default function GenerationProgress() {
 
     startedRef.current = true;
     const signal = abortRef.current.signal;
-    createNoteFromSources({ repo, engine, inputs, language, generateStudyTools, classId, folderId, contentCategory, topic, contentScope, signal, onProgress: setJob })
+    createNoteFromSources({ repo, engine, ocrEngine: visionEngine ?? undefined, inputs, language, generateStudyTools, classId, folderId, contentCategory, topic, contentScope, signal, onProgress: setJob })
       .then((id) => {
         setNoteId(id);
         setDone(true);

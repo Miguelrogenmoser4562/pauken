@@ -24,9 +24,12 @@ class FakeEngine implements Engine {
   readonly mode = "cloud" as const;
   calls: string[] = [];
   capabilities(): EngineCapabilities {
-    return { chat: true, embeddings: true };
+    return { chat: true, embeddings: true, vision: false };
   }
   async complete(_opts: CompletionOptions, _onToken?: TokenHandler): Promise<string> {
+    return "";
+  }
+  async ocrImage(_imageDataUrl: string): Promise<string> {
     return "";
   }
   async structured<T>(opts: StructuredOptions<T>): Promise<T> {

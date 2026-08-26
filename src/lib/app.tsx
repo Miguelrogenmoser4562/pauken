@@ -16,7 +16,7 @@ import { ServerStore, verifyKey } from "./api";
 import { createEngine } from "./engine";
 import type { Engine } from "./engine/types";
 import { resilient } from "./engine/resilient";
-import { detectProvider, loadApiKey } from "./engine/keys";
+import { loadApiKey, sharedOpenAIKey } from "./engine/keys";
 import { getEnginePrefs, saveEnginePrefs } from "./prefs";
 import type { EnginePrefs, PaukenUser } from "./types";
 import { reconcileJobs } from "./generation/pipeline";
@@ -79,16 +79,33 @@ export async function buildEngine(
     }
   }
 
-  /* Fall back to local API key */
+  /* Generation is always DeepSeek. In local mode it uses the user's DeepSeek
+     key; in server mode it routes through the Pauken server's DeepSeek proxy. */
   const key = await loadApiKey();
-  const provider = prefs.cloudProvider || detectProvider(key);
-  if (!provider) return null;
+  if (!key) return null;
   return resilient(
     createEngine({
       mode: "cloud",
-      provider,
+      provider: "deepseek",
       apiKey: key,
       model: prefs.cloudModel || undefined,
+    }),
+  );
+}
+
+/* A separate engine used ONLY for OCR of image-only (scanned) PDFs. Uses a
+   shared OpenAI key supplied via the VITE_OPENAI_OCR_KEY env var so every user
+   can OCR scanned uploads without configuration. Independent of the main
+   (DeepSeek) engine and of the server connection, so it works in both local and
+   server mode. Returns null when no OCR key is configured. */
+export async function buildVisionEngine(): Promise<Engine | null> {
+  const apiKey = sharedOpenAIKey();
+  if (!apiKey) return null;
+  return resilient(
+    createEngine({
+      mode: "cloud",
+      provider: "openai",
+      apiKey,
     }),
   );
 }
@@ -103,6 +120,7 @@ const ALL_COLLECTIONS = [
 interface AppCtx {
   repo: Repo | null;
   engine: Engine | null;
+  visionEngine: Engine | null;
   prefs: EnginePrefs;
   user: PaukenUser | null;
   ready: boolean;
@@ -120,6 +138,7 @@ const Ctx = createContext<AppCtx | null>(null);
 export function AppProvider({ children }: { children: ReactNode }) {
   const [repo, setRepo] = useState<Repo | null>(null);
   const [engine, setEngine] = useState<Engine | null>(null);
+  const [visionEngine, setVisionEngine] = useState<Engine | null>(null);
   const [prefs, setPrefs] = useState<EnginePrefs>(() => getEnginePrefs());
   const [user, setUser] = useState<PaukenUser | null>(null);
   const [version, setVersion] = useState(0);
@@ -127,19 +146,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const bump = useCallback(() => setVersion((v) => v + 1), []);
 
+  /* Rebuild both engines (main DeepSeek engine + separate OCR vision engine). */
+  const rebuildEngines = useCallback(async (p: EnginePrefs) => {
+    const [e, v] = await Promise.all([buildEngine(p), buildVisionEngine()]);
+    setEngine(e);
+    setVisionEngine(v);
+  }, []);
+
   const reloadEngine = useCallback(() => {
     const p = getEnginePrefs();
     setPrefs(p);
-    buildEngine(p).then(setEngine);
-  }, []);
+    void rebuildEngines(p);
+  }, [rebuildEngines]);
 
   const savePrefs = useCallback(
     (p: EnginePrefs) => {
       saveEnginePrefs(p);
       setPrefs(p);
-      buildEngine(p).then(setEngine);
+      void rebuildEngines(p);
     },
-    [],
+    [rebuildEngines],
   );
 
   const reconnect = useCallback(
@@ -158,10 +184,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       store.pullAll().catch(() => {});
       repoPromise = Promise.resolve(new Repo(store));
       setRepo(await repoPromise);
-      buildEngine(p).then(setEngine);
+      void rebuildEngines(p);
       return u;
     },
-    [],
+    [rebuildEngines],
   );
 
   const disconnect = useCallback(() => {
@@ -171,8 +197,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setUser(null);
     repoPromise = null;
     getRepo().then(setRepo);
-    buildEngine(p).then(setEngine);
-  }, []);
+    void rebuildEngines(p);
+  }, [rebuildEngines]);
 
   const clearLocalData = useCallback(async () => {
     const localStore = await initLocalStore();
@@ -203,9 +229,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       await reconcileJobs(r).catch(() => {});
       await r.pruneOrphans().catch(() => {});
-      const e = await buildEngine().catch(() => null);
+      const [e, v] = await Promise.all([
+        buildEngine().catch(() => null),
+        buildVisionEngine().catch(() => null),
+      ]);
       if (!alive) return;
       setEngine(e);
+      setVisionEngine(v);
       setReady(true);
     })();
     return () => {
@@ -217,6 +247,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     () => ({
       repo,
       engine,
+      visionEngine,
       prefs,
       user,
       ready,
@@ -228,7 +259,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       disconnect,
       clearLocalData,
     }),
-    [repo, engine, prefs, user, ready, version, bump, reloadEngine, savePrefs, reconnect, disconnect, clearLocalData],
+    [repo, engine, visionEngine, prefs, user, ready, version, bump, reloadEngine, savePrefs, reconnect, disconnect, clearLocalData],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

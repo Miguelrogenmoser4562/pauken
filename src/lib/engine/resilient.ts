@@ -7,6 +7,7 @@
 import type {
   Engine,
   CompletionOptions,
+  OcrOptions,
   StructuredOptions,
   TokenHandler,
 } from "./types";
@@ -58,6 +59,8 @@ export function resilient(engine: Engine): Engine {
       withBackoff(() => engine.structured(opts), opts.signal),
     embed: (texts: string[], signal?: AbortSignal) =>
       withBackoff(() => engine.embed(texts, signal), signal),
+    ocrImage: (imageDataUrl: string, opts?: OcrOptions) =>
+      withBackoff(() => engine.ocrImage(imageDataUrl, opts), opts?.signal),
     validate: () => engine.validate(),
   };
 }

@@ -23,6 +23,15 @@ export interface IngestResult {
      needs to transcribe `audio` before notes can be generated. */
   needsTranscription?: boolean;
   audio?: Blob;
+  /* True for image-only sources (e.g. scanned PDFs) whose text isn't known
+     yet — the engine needs to OCR them before notes can be generated. */
+  needsOcr?: boolean;
+  /* Base64 data URL of the original file (e.g. the PDF itself), sent to the
+     vision engine so it can read native text instead of a re-rendered image. */
+  fileDataUrl?: string;
+  /* Fallback per-page rendered images, used only when `fileDataUrl` isn't
+     available (e.g. a non-PDF image source). */
+  pageImages?: string[];
 }
 
 function titleFromFilename(filename: string): string {

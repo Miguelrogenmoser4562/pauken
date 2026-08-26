@@ -31,6 +31,19 @@ export type TokenHandler = (delta: string) => void;
 export interface EngineCapabilities {
   chat: boolean;
   embeddings: boolean;
+  /* True when the provider can OCR page images via vision (OpenAI). */
+  vision: boolean;
+}
+
+/* Options for OCR of a single page image. `system` is the OCR instruction;
+   `model` optionally overrides the default vision model. */
+export interface OcrOptions {
+  system?: string;
+  signal?: AbortSignal;
+  model?: string;
+  /* Filename (with extension) of the source file, used when OCR-ing a file
+     (e.g. a PDF data URL) so the provider can infer its MIME type. */
+  filename?: string;
 }
 
 export interface Engine {
@@ -46,6 +59,10 @@ export interface Engine {
 
   /* Vector embeddings for RAG. */
   embed(texts: string[], signal?: AbortSignal): Promise<number[][]>;
+
+  /* OCR a page image (PNG data URL) into text via vision. Throws an
+     EngineError with kind "unsupported" when the provider can't see images. */
+  ocrImage(imageDataUrl: string, opts?: OcrOptions): Promise<string>;
 
   /* Cheap liveness/credentials check. Throws on failure. */
   validate(): Promise<void>;

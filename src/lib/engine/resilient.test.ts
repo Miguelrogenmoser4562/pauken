@@ -6,10 +6,11 @@ import type { Engine } from "./types";
 function base(overrides: Partial<Engine>): Engine {
   return {
     mode: "cloud",
-    capabilities: () => ({ chat: true, embeddings: false }),
+    capabilities: () => ({ chat: true, embeddings: false, vision: false }),
     complete: async () => "x",
     structured: async () => ({}) as never,
     embed: async () => [],
+    ocrImage: async () => "",
     validate: async () => {},
     ...overrides,
   };

@@ -530,3 +530,17 @@ export const syllabusSchema = {
     },
   },
 } as const;
+
+/* ---- OCR (image-only PDFs / scans) -------------------------------------- */
+
+export const ocrSystem =
+  "You transcribe the content of a scanned or image-based page into " +
+  "GitHub-flavored Markdown.\n" +
+  "Requirements:\n" +
+  "- Transcribe ALL text and math exactly as shown; never skip or summarize.\n" +
+  "- Render every mathematical expression in LaTeX using KaTeX delimiters: " +
+  "inline `$...$` and display `$$...$$`. Preserve symbols, fractions, " +
+  "subscripts, superscripts, and multi-line equations exactly.\n" +
+  "- Preserve the page's structure: headings, lists, tables, and paragraph breaks.\n" +
+  "- Do not add commentary, explanations, or content that is not in the image.\n" +
+  "- Output ONLY the Markdown transcription — no preamble and no wrapping code fence.";

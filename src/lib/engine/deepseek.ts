@@ -24,17 +24,44 @@ export class DeepSeekEngine implements Engine {
   ) {}
 
   capabilities(): EngineCapabilities {
-    return { chat: true, embeddings: false };
+    return { chat: true, embeddings: false, vision: false };
   }
 
   async complete(opts: CompletionOptions, onToken?: TokenHandler): Promise<string> {
+    const first = await this.requestComplete(opts, onToken, opts.signal, false);
+    if (first.text.trim()) return first.text;
+
+    /* The reasoning model sometimes spends its entire output budget on
+       chain-of-thought and returns no answer (empty content). Retry once with
+       thinking disabled so the final answer is emitted directly. */
+    const fallback = await this.requestComplete(opts, onToken, opts.signal, true);
+    if (fallback.text.trim()) return fallback.text;
+
+    const finishReason = first.finishReason ?? fallback.finishReason;
+    const sawReasoning = first.sawReasoning || fallback.sawReasoning;
+    throw new EngineError(
+      `DeepSeek returned no content (finish_reason=${finishReason ?? "unknown"}` +
+        (sawReasoning ? ", model produced only reasoning tokens)" : ")") +
+        ". The response stream carried no usable text.",
+      "unknown",
+    );
+  }
+
+  /* Streams a completion. When `disableThinking` is true the request forces
+     thinking off so the model emits a direct answer instead of reasoning. */
+  private async requestComplete(
+    opts: CompletionOptions,
+    onToken: TokenHandler | undefined,
+    signal: AbortSignal | undefined,
+    disableThinking: boolean,
+  ): Promise<{ text: string; finishReason?: string; sawReasoning?: boolean }> {
     const res = await this.post("/chat/completions", {
       model: this.resolveModel(opts.tier),
       messages: buildMessages(opts),
       stream: true,
-      ...thinkingParam(opts.tier),
+      ...(disableThinking ? { thinking: { type: "disabled" } } : thinkingParam(opts.tier)),
       ...(opts.maxTokens !== undefined ? { max_tokens: opts.maxTokens } : {}),
-    }, opts.signal);
+    }, signal);
 
     if (!res.body) throw new EngineError("DeepSeek returned an empty stream.", "unknown");
     const reader = res.body.getReader();
@@ -78,14 +105,9 @@ export class DeepSeekEngine implements Engine {
       throw err;
     }
     if (!full.trim() && finishReason !== undefined) {
-      throw new EngineError(
-        `DeepSeek returned no content (finish_reason=${finishReason}` +
-          (sawReasoning ? ", model produced only reasoning tokens)" : ")") +
-          ". The response stream carried no usable text.",
-        "unknown",
-      );
+      return { text: "", finishReason, sawReasoning };
     }
-    return full;
+    return { text: full };
   }
 
   async structured<T>(opts: StructuredOptions<T>): Promise<T> {
@@ -125,6 +147,10 @@ export class DeepSeekEngine implements Engine {
   }
 
   async embed(_texts: string[], _signal?: AbortSignal): Promise<number[][]> {
+    throw new EngineError(UNSUPPORTED_MESSAGE, "unsupported");
+  }
+
+  async ocrImage(_imageDataUrl: string): Promise<string> {
     throw new EngineError(UNSUPPORTED_MESSAGE, "unsupported");
   }
 

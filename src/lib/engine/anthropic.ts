@@ -31,7 +31,7 @@ export class AnthropicEngine implements Engine {
   ) {}
 
   capabilities(): EngineCapabilities {
-    return { chat: true, embeddings: false };
+    return { chat: true, embeddings: false, vision: false };
   }
 
   async complete(opts: CompletionOptions, onToken?: TokenHandler): Promise<string> {
@@ -108,6 +108,10 @@ export class AnthropicEngine implements Engine {
   }
 
   async embed(_texts: string[], _signal?: AbortSignal): Promise<number[][]> {
+    throw new EngineError(UNSUPPORTED_MESSAGE, "unsupported");
+  }
+
+  async ocrImage(_imageDataUrl: string): Promise<string> {
     throw new EngineError(UNSUPPORTED_MESSAGE, "unsupported");
   }
 

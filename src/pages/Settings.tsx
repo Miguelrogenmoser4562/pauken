@@ -10,6 +10,7 @@ import {
   RefreshCw,
   Server,
   Settings as SettingsIcon,
+  Sparkles,
   Users,
   Wifi,
   WifiOff,
@@ -17,6 +18,7 @@ import {
 import { useApp } from "../lib/app";
 import { exportMarkdown, downloadText } from "../lib/export";
 import { serverHealth, verifyKeyWithError, fetchAdminUsers, deleteUserData, resetDatabase, createUser, updateAdminUser, updateMyAvatar } from "../lib/api";
+import { saveApiKey, loadApiKey, clearApiKey } from "../lib/engine/keys";
 import { checkForUpdates } from "../lib/updates";
 import type { UpdateInfo } from "../lib/updates";
 import type { PaukenUser } from "../lib/types";
@@ -52,6 +54,40 @@ export default function Settings() {
   /* Update check state */
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [checking, setChecking] = useState(false);
+
+  /* AI provider state — a DeepSeek key powers generation. */
+  const [aiKey, setAiKey] = useState("");
+  const [aiMsg, setAiMsg] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    loadApiKey()
+      .then((k) => {
+        if (alive) setAiKey(k);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function saveAi() {
+    await saveApiKey(aiKey);
+    savePrefs({
+      ...prefs,
+      mode: "cloud",
+      cloudModel: prefs.cloudModel ?? "",
+    });
+    setAiMsg(aiKey.trim() ? "DeepSeek key saved." : "Saved.");
+  }
+
+  async function clearAi() {
+    await clearApiKey();
+    savePrefs({ ...prefs });
+    setAiKey("");
+    setAiMsg("DeepSeek key cleared.");
+  }
+
 
   async function checkUpdates() {
     setChecking(true);
@@ -255,6 +291,47 @@ export default function Settings() {
                 )}
               </div>
             )}
+          </div>
+
+          {/* AI provider */}
+          <div className="rounded-card border border-edge bg-card p-6 shadow-soft">
+            <h2 className="flex items-center gap-2 font-display text-xl font-bold">
+              <Sparkles className="size-5 text-accent" />
+              AI Provider
+            </h2>
+            <p className="mt-1 text-sm text-ink-faint">
+              Pauken generates notes with DeepSeek. Set your DeepSeek key here
+              (used when you're not connected to a Pauken server). Reading scanned
+              PDFs is handled automatically by a built-in key — nothing to set up.
+            </p>
+
+            <div className="mt-4 space-y-3">
+              <div className="flex items-center gap-2 rounded-xl border border-edge bg-panel px-3 py-2.5">
+                <Sparkles className="size-4 shrink-0 text-ink-faint" />
+                <input
+                  type="password"
+                  value={aiKey}
+                  onChange={(e) => setAiKey(e.target.value)}
+                  placeholder="Your DeepSeek API key (sk-…)"
+                  className="w-full bg-transparent text-sm outline-none placeholder:text-ink-faint"
+                />
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => void saveAi()}
+                  className="rounded-xl bg-accent px-4 py-2 text-sm font-bold text-white hover:bg-accent-hover"
+                >
+                  Save DeepSeek key
+                </button>
+                <button
+                  onClick={() => void clearAi()}
+                  className="rounded-xl border border-danger-edge bg-danger-bg px-4 py-2 text-sm font-bold text-danger-ink hover:bg-danger-soft"
+                >
+                  Clear
+                </button>
+                {aiMsg && <span className="text-sm text-ink-faint">{aiMsg}</span>}
+              </div>
+            </div>
           </div>
 
           {/* Server Users / Partners */}

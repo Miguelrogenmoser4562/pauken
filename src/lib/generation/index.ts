@@ -74,7 +74,7 @@ export async function generateNoteBody(
         messages: [{ role: "user", content: noteUser(sourceText) }],
         tier: "strong",
         temperature: 0.4,
-        maxTokens: 8000,
+        maxTokens: 16000,
       },
       onToken,
     );
@@ -89,7 +89,7 @@ export async function generateNoteBody(
       messages: [{ role: "user", content: noteUser(chunks[i]) }],
       tier: "strong",
       temperature: 0.4,
-      maxTokens: 4000,
+      maxTokens: 8000,
     });
     parts.push(stripFence(md).trim());
     onToken?.(md);
@@ -104,7 +104,7 @@ export async function generateNoteBody(
           messages: [{ role: "user", content: combined }],
           tier: "strong",
           temperature: 0.3,
-          maxTokens: 6000,
+          maxTokens: 12000,
         }),
       );
     } catch {

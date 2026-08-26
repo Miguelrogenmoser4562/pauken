@@ -6,6 +6,7 @@ import type {
   CompletionOptions,
   Engine,
   EngineCapabilities,
+  OcrOptions,
   StructuredOptions,
   TokenHandler,
 } from "./types";
@@ -23,7 +24,7 @@ export class OpenAIEngine implements Engine {
   ) {}
 
   capabilities(): EngineCapabilities {
-    return { chat: true, embeddings: true };
+    return { chat: true, embeddings: true, vision: true };
   }
 
   async complete(opts: CompletionOptions, onToken?: TokenHandler): Promise<string> {
@@ -95,6 +96,61 @@ export class OpenAIEngine implements Engine {
     }, signal);
     const json = await res.json();
     return (json.data ?? []).map((d: { embedding: number[] }) => d.embedding);
+  }
+
+  async ocrImage(dataUrl: string, opts?: OcrOptions): Promise<string> {
+    /* Native PDF input: OpenAI can read the file directly (extracting both
+       text and images). Sending a base64 PDF as an image_url makes the model
+       "see" nothing coherent, so route PDFs to a `file` content block. */
+    const isPdf = dataUrl.startsWith("data:application/pdf");
+    const contentBlock = isPdf
+      ? {
+          type: "file" as const,
+          file: {
+            file_data: dataUrl,
+            filename: opts?.filename ?? "document.pdf",
+          },
+        }
+      : {
+          type: "image_url" as const,
+          image_url: { url: dataUrl, detail: "high" as const },
+        };
+    const res = await this.post("/chat/completions", {
+      model: opts?.model ?? "gpt-4o-mini",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: opts?.system ?? "Transcribe the content of this document as Markdown." },
+            contentBlock,
+          ],
+        },
+      ],
+      stream: false,
+      max_tokens: 4096,
+    }, opts?.signal);
+
+    const json = await res.json();
+    const content = json.choices?.[0]?.message?.content;
+    if (typeof content !== "string") {
+      throw new EngineError("OpenAI returned no OCR content.", "unknown");
+    }
+    const trimmed = content.trim();
+    if (!trimmed) {
+      throw new EngineError("OpenAI returned empty OCR content.", "unknown");
+    }
+    if (
+      /unable to (transcribe|read)|i(?:'| a)m (?:unable|sorry|not able)|can'?t (?:transcribe|read)|i cannot (?:transcribe|read)/i.test(
+        trimmed,
+      )
+    ) {
+      throw new EngineError(
+        "The OCR model couldn't read this page. The scan may be too blurry or " +
+          "too low-resolution. Try re-capturing it at higher quality, or paste the text directly.",
+        "unknown",
+      );
+    }
+    return trimmed;
   }
 
   async validate(): Promise<void> {

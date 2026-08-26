@@ -270,6 +270,7 @@ export interface ChatTurn {
 export type JobStage =
   | "ingest"
   | "transcribe"
+  | "ocr"
   | "notes"
   | "title"
   | "flashcards"

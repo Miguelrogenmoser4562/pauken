@@ -7,8 +7,19 @@ import type { Provider } from "../types";
 export function detectProvider(key: string): Provider | null {
   const k = key.trim();
   if (k.startsWith("sk-ant-")) return "anthropic";
+  if (k.startsWith("sk-proj-")) return "openai";
   if (k.startsWith("sk-")) return "deepseek";
   return null;
+}
+
+/* Shared key used only for vision OCR of scanned/image-only PDFs, so scanned
+   uploads work without per-user setup. Supplied at build time via the
+   VITE_OPENAI_OCR_KEY env var (see .env.example) — never hardcoded in source.
+   Empty when unset, in which case OCR is unavailable and the pipeline falls
+   back to its "no OCR engine configured" path. Generation never uses this key —
+   the app is DeepSeek-only for generation. */
+export function sharedOpenAIKey(): string {
+  return import.meta.env.VITE_OPENAI_OCR_KEY ?? "";
 }
 
 const LS_KEY = "pauken.apikey";
