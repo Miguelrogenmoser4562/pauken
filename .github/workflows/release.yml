@@ -81,6 +81,9 @@ jobs:
         run: npm run ${{ matrix.script }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Shared OCR key (embedded at build time so scanned-PDF OCR works
+          # out of the box). Vite only exposes VITE_* vars; empty = no OCR.
+          VITE_OPENAI_OCR_KEY: ${{ secrets.VITE_OPENAI_OCR_KEY }}
           # macOS signing uses the keychain set up above (CSC_KEYCHAIN/MAC_SIGN);
           # CSC_LINK is deliberately NOT passed here. Notarization reads the
           # Apple credentials. Windows Authenticode signing activates if the
